@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use rgb_lib::{BitcoinNetwork, Error as RgbLibError};
+use lightning::rgb_utils::{BitcoinNetwork, RgbLibError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]

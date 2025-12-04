@@ -10,6 +10,12 @@ services:
       - 18443:18443
     volumes:
       - ./datacore:/srv/app/.bitcoin
+    healthcheck:
+      test: ["CMD", "bitcoin-cli", "-regtest", "-rpcuser=user", "-rpcpassword=password", "getblockchaininfo"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
   electrs:
     image: registry.gitlab.com/hashbeam/docker/electrs:0.10.9
     environment:
@@ -19,10 +25,38 @@ services:
     volumes:
       - ./dataindex:/srv/app/db
     depends_on:
-      - bitcoind
+      bitcoind:
+        condition: service_healthy
     ports:
       - 50001:50001
+  electrs-http:
+    build:
+      context: .
+      dockerfile: Dockerfile.electrs
+    container_name: electrs-http
+    ports:
+      - "3002:3002"    # HTTP API (Esplora backend)
+      - "50002:50002"  # Electrum RPC (different port to avoid conflict)
+      - "24224:24224"  # Monitoring
+    volumes:
+      - electrs-http-data:/data
+    command:
+      - --network=regtest
+      - --daemon-rpc-addr=bitcoind:18443
+      - --cookie=user:password
+      - --electrum-rpc-addr=0.0.0.0:50002
+      - --http-addr=0.0.0.0:3002
+      - --monitoring-addr=0.0.0.0:24224
+      - --db-dir=/data
+      - --jsonrpc-import
+      - -vvv
+    depends_on:
+      bitcoind:
+        condition: service_healthy
   proxy:
     image: ghcr.io/rgb-tools/rgb-proxy-server:0.3.0
     ports:
       - 3000:3000
+
+volumes:
+  electrs-http-data:

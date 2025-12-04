@@ -1,5 +1,5 @@
 use clap::{value_parser, Parser};
-use rgb_lib::BitcoinNetwork;
+use lightning::rgb_utils::BitcoinNetwork;
 use std::path::PathBuf;
 
 use crate::auth::check_auth_args;

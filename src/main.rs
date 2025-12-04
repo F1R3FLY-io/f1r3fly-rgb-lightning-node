@@ -4,6 +4,7 @@ mod backup;
 mod bitcoind;
 mod disk;
 mod error;
+mod f1r3fly_rgb_adapter;
 mod ldk;
 mod rgb;
 mod routes;
@@ -35,7 +36,10 @@ use tracing_subscriber::{
         FormatFields,
     },
     prelude::*,
+    Layer,
+    EnvFilter,
 };
+use tracing_log::LogTracer;
 
 use crate::args::UserArgs;
 use crate::auth::conditional_auth_middleware;
@@ -56,6 +60,9 @@ use crate::utils::{start_daemon, AppState, LOGS_DIR};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env file if it exists (for FIREFLY_PRIVATE_KEY and other env vars)
+    dotenvy::dotenv().ok();
+    
     let args = args::parse_startup_args()?;
 
     // stdout logger
@@ -73,10 +80,20 @@ async fn main() -> Result<()> {
         .with_thread_names(true)
         .with_writer(non_blocking);
 
+    // Initialize log-to-tracing bridge to capture log crate messages from f1r3fly libraries
+    LogTracer::init().ok();
+    
+    // Create filter: INFO for most things, DEBUG for f1r3fly modules
+    let stdout_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| {
+            EnvFilter::new("info,f1r3fly_rgb_wallet=debug,f1r3fly_rgb=debug")
+        });
+    
     tracing_subscriber::registry()
-        .with(stdout_log.with_filter(filter::LevelFilter::INFO))
+        .with(stdout_log.with_filter(stdout_filter))
         .with(file_log.with_filter(filter::LevelFilter::DEBUG))
-        .init();
+        .try_init()
+        .ok();
 
     let addr = SocketAddr::from(([0, 0, 0, 0], args.daemon_listening_port));
 

@@ -9,7 +9,8 @@ use bitcoin::hashes::sha256::{self, Hash as Sha256};
 use bitcoin::hashes::Hash;
 use bitcoin::secp256k1::PublicKey;
 use bitcoin::{Network, ScriptBuf};
-use hex::DisplayHex;
+use hex_conservative::DisplayHex;
+use hypersonic::ContractId;
 use lightning::ln::bolt11_payment::{
     payment_parameters_from_invoice, payment_parameters_from_zero_amount_invoice,
 };
@@ -17,6 +18,18 @@ use lightning::ln::invoice_utils::create_invoice_from_channelmanager;
 use lightning::ln::types::ChannelId;
 use lightning::offers::offer::{self, Offer};
 use lightning::onion_message::messenger::Destination;
+use lightning::rgb_utils::{
+    check_indexer_url as rgb_lib_check_indexer_url, generate_keys, recipient_id_from_script_buf,
+    AssetCFA as RgbLibAssetCFA, AssetNIA as RgbLibAssetNIA, AssetSchema as RgbLibAssetSchema,
+    AssetUDA as RgbLibAssetUDA, Assignment as RgbLibAssignment, Balance as RgbLibBalance,
+    BitcoinNetwork as RgbLibNetwork, EmbeddedMedia as RgbLibEmbeddedMedia,
+    IndexerProtocol as RgbLibIndexerProtocol, Invoice as RgbLibInvoice, Media as RgbLibMedia,
+    ProofOfReserves as RgbLibProofOfReserves, Recipient, RecipientInfo,
+    RecipientType as RgbLibRecipientType, RgbTransport, Token as RgbLibToken,
+    TokenLight as RgbLibTokenLight, TransactionType as RgbLibTransactionType,
+    TransferKind as RgbLibTransferKind, TransferStatus as RgbLibTransferStatus,
+    TransportType as RgbLibTransportType, WitnessData as RgbLibWitnessData,
+};
 use lightning::rgb_utils::{
     get_rgb_channel_info_path, get_rgb_payment_info_path, parse_rgb_channel_info,
     parse_rgb_payment_info, STATIC_BLINDING,
@@ -45,23 +58,6 @@ use lightning::{
 use lightning_invoice::Currency;
 use lightning_invoice::{Bolt11Invoice, PaymentSecret};
 use regex::Regex;
-use rgb_lib::{
-    generate_keys,
-    utils::recipient_id_from_script_buf,
-    wallet::{
-        rust_only::{
-            check_indexer_url as rgb_lib_check_indexer_url,
-            IndexerProtocol as RgbLibIndexerProtocol,
-        },
-        AssetCFA as RgbLibAssetCFA, AssetNIA as RgbLibAssetNIA, AssetUDA as RgbLibAssetUDA,
-        Balance as RgbLibBalance, EmbeddedMedia as RgbLibEmbeddedMedia, Invoice as RgbLibInvoice,
-        Media as RgbLibMedia, ProofOfReserves as RgbLibProofOfReserves, Recipient, RecipientInfo,
-        RecipientType as RgbLibRecipientType, Token as RgbLibToken, TokenLight as RgbLibTokenLight,
-        WitnessData as RgbLibWitnessData,
-    },
-    AssetSchema as RgbLibAssetSchema, Assignment as RgbLibAssignment,
-    BitcoinNetwork as RgbLibNetwork, ContractId, RgbTransport,
-};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
@@ -337,7 +333,6 @@ impl From<Network> for BitcoinNetwork {
             Network::Testnet4 => Self::Testnet4,
             Network::Regtest => Self::Regtest,
             Network::Signet => Self::Signet,
-            _ => unimplemented!("unsupported network"),
         }
     }
 }
@@ -2404,10 +2399,10 @@ pub(crate) async fn list_transactions(
     for tx in unlocked_state.rgb_list_transactions(payload.skip_sync)? {
         transactions.push(Transaction {
             transaction_type: match tx.transaction_type {
-                rgb_lib::TransactionType::RgbSend => TransactionType::RgbSend,
-                rgb_lib::TransactionType::Drain => TransactionType::Drain,
-                rgb_lib::TransactionType::CreateUtxos => TransactionType::CreateUtxos,
-                rgb_lib::TransactionType::User => TransactionType::User,
+                RgbLibTransactionType::RgbSend => TransactionType::RgbSend,
+                RgbLibTransactionType::Drain => TransactionType::Drain,
+                RgbLibTransactionType::CreateUtxos => TransactionType::CreateUtxos,
+                RgbLibTransactionType::User => TransactionType::User,
             },
             txid: tx.txid,
             received: tx.received,
@@ -2437,21 +2432,19 @@ pub(crate) async fn list_transfers(
             created_at: transfer.created_at,
             updated_at: transfer.updated_at,
             status: match transfer.status {
-                rgb_lib::TransferStatus::WaitingCounterparty => TransferStatus::WaitingCounterparty,
-                rgb_lib::TransferStatus::WaitingConfirmations => {
-                    TransferStatus::WaitingConfirmations
-                }
-                rgb_lib::TransferStatus::Settled => TransferStatus::Settled,
-                rgb_lib::TransferStatus::Failed => TransferStatus::Failed,
+                RgbLibTransferStatus::WaitingCounterparty => TransferStatus::WaitingCounterparty,
+                RgbLibTransferStatus::WaitingConfirmations => TransferStatus::WaitingConfirmations,
+                RgbLibTransferStatus::Settled => TransferStatus::Settled,
+                RgbLibTransferStatus::Failed => TransferStatus::Failed,
             },
             requested_assignment: transfer.requested_assignment.map(|a| a.into()),
             assignments: transfer.assignments.into_iter().map(|a| a.into()).collect(),
             kind: match transfer.kind {
-                rgb_lib::TransferKind::Issuance => TransferKind::Issuance,
-                rgb_lib::TransferKind::ReceiveBlind => TransferKind::ReceiveBlind,
-                rgb_lib::TransferKind::ReceiveWitness => TransferKind::ReceiveWitness,
-                rgb_lib::TransferKind::Send => TransferKind::Send,
-                rgb_lib::TransferKind::Inflation => TransferKind::Inflation,
+                RgbLibTransferKind::Issuance => TransferKind::Issuance,
+                RgbLibTransferKind::ReceiveBlind => TransferKind::ReceiveBlind,
+                RgbLibTransferKind::ReceiveWitness => TransferKind::ReceiveWitness,
+                RgbLibTransferKind::Send => TransferKind::Send,
+                RgbLibTransferKind::Inflation => TransferKind::Inflation,
             },
             txid: transfer.txid,
             recipient_id: transfer.recipient_id,
@@ -2464,7 +2457,7 @@ pub(crate) async fn list_transfers(
                 .map(|tte| TransferTransportEndpoint {
                     endpoint: tte.endpoint.clone(),
                     transport_type: match tte.transport_type {
-                        rgb_lib::TransportType::JsonRpc => TransportType::JsonRpc,
+                        RgbLibTransportType::JsonRpc => TransportType::JsonRpc,
                     },
                     used: tte.used,
                 })
@@ -3101,7 +3094,8 @@ pub(crate) async fn open_channel(
             let mut fake_p2wsh: [u8; 34] = [0; 34];
             fake_p2wsh[1] = 32;
             let script_buf = ScriptBuf::from_bytes(fake_p2wsh.to_vec());
-            let recipient_id = recipient_id_from_script_buf(script_buf, state.static_state.network);
+            let recipient_id =
+                recipient_id_from_script_buf(&script_buf, state.static_state.network);
             let asset_id = contract_id.to_string();
             let schema = unlocked_state
                 .rgb_get_asset_metadata(*contract_id)?

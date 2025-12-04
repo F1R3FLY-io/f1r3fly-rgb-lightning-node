@@ -1,24 +1,298 @@
-name: Run tests
+name: Tests
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ master, f1r3fly-integration ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ master, f1r3fly-integration ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
-  test:
+  # ==========================================================================
+  # Build Check - Verify compilation
+  # ==========================================================================
+  build-check:
+    name: Build Check
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           submodules: true
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
+          toolchain: stable
           rustflags: ""
-      - name: Tests
-        run: cargo test -- --test-threads=1
+          cache: true
+      
+      - name: Configure git for private repos
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.F1R3FLY_RGB_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      
+      - name: Configure Cargo to use git CLI
+        run: |
+          mkdir -p ~/.cargo
+          echo '[net]' >> ~/.cargo/config.toml
+          echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
+      
+      - name: Build
+        run: cargo build --all-targets
+
+  # ==========================================================================
+  # Integration Tests - issue_nia and payment tests
+  # ==========================================================================
+  integration-tests:
+    name: Integration Tests (issue_nia, payment)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+          cache: true
+      
+      - name: Configure git for private repos
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.F1R3FLY_RGB_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      
+      - name: Configure Cargo to use git CLI
+        run: |
+          mkdir -p ~/.cargo
+          echo '[net]' >> ~/.cargo/config.toml
+          echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-electrs-${{ hashFiles('Dockerfile.electrs') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-electrs-
+      
+      - name: Build electrs-http with cache
+        run: |
+          docker buildx build \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            -f Dockerfile.electrs \
+            -t electrs-http \
+            --load \
+            .
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+      
+      - name: Start test services
+        run: |
+          echo "Starting test services with regtest.sh..."
+          chmod +x ./regtest.sh
+          ./regtest.sh start
+      
+      - name: Verify services are ready
+        run: |
+          chmod +x ./ci/scripts/wait-for-services.sh
+          ./ci/scripts/wait-for-services.sh
+      
+      - name: Run issue_nia test
+        run: |
+          set -o pipefail
+          cargo test issue_nia -- --test-threads=1 --nocapture 2>&1 | tee test-issue-nia-output.log || (cat test-issue-nia-output.log && exit 1)
+      
+      - name: Run payment test
+        run: |
+          set -o pipefail
+          cargo test payment::success -- --test-threads=1 --nocapture 2>&1 | tee test-payment-output.log || (cat test-payment-output.log && exit 1)
+      
+      - name: Collect service logs
+        if: always()
+        run: |
+          chmod +x ./ci/scripts/collect-logs.sh
+          ./ci/scripts/collect-logs.sh ci-logs-integration
+      
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-logs
+          path: ci-logs-integration/
+          retention-days: 7
+      
+      - name: Upload test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-failed-logs
+          path: |
+            test-issue-nia-output.log
+            test-payment-output.log
+            tmp/
+            ci-logs-integration/
+          retention-days: 7
+      
+      - name: Stop services
+        if: always()
+        run: ./regtest.sh stop
+
+  # ==========================================================================
+  # CLI Tests - End-to-end test using test-lightning-cli.sh
+  # ==========================================================================
+  cli-tests:
+    name: CLI Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+          cache: true
+      
+      - name: Configure git for private repos
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.F1R3FLY_RGB_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      
+      - name: Configure Cargo to use git CLI
+        run: |
+          mkdir -p ~/.cargo
+          echo '[net]' >> ~/.cargo/config.toml
+          echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl netcat-openbsd
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-electrs-${{ hashFiles('Dockerfile.electrs') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-electrs-
+      
+      - name: Build electrs-http with cache
+        run: |
+          docker buildx build \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            -f Dockerfile.electrs \
+            -t electrs-http \
+            --load \
+            .
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+      
+      - name: Build rgb-lightning-node binary
+        run: |
+          echo "Building rgb-lightning-node binary..."
+          cargo build --bin rgb-lightning-node
+          echo "✓ Binary built at target/debug/rgb-lightning-node"
+      
+      - name: Start test services
+        run: |
+          echo "Starting test services with regtest.sh..."
+          chmod +x ./regtest.sh
+          ./regtest.sh start
+      
+      - name: Verify services are ready
+        run: |
+          chmod +x ./ci/scripts/wait-for-services.sh
+          ./ci/scripts/wait-for-services.sh
+      
+      - name: Run CLI test script
+        run: |
+          set -o pipefail
+          chmod +x ./ci/scripts/test-lightning-cli.sh
+          ./ci/scripts/test-lightning-cli.sh --clean 2>&1 | tee cli-test-output.log || (cat cli-test-output.log && exit 1)
+      
+      - name: Collect service logs
+        if: always()
+        run: |
+          chmod +x ./ci/scripts/collect-logs.sh
+          ./ci/scripts/collect-logs.sh ci-logs-cli
+      
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-test-logs
+          path: ci-logs-cli/
+          retention-days: 7
+      
+      - name: Upload test output on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-test-failed-logs
+          path: |
+            cli-test-output.log
+            tmp/cli_test/
+            ci-logs-cli/
+          retention-days: 7
+      
+      - name: Stop services
+        if: always()
+        run: ./regtest.sh stop
+
+  # ==========================================================================
+  # Summary Job
+  # ==========================================================================
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [build-check, integration-tests, cli-tests]
+    if: always()
+    
+    steps:
+      - name: Check test results
+        run: |
+          echo "==================================="
+          echo "Test Results Summary"
+          echo "==================================="
+          echo ""
+          echo "Build Check:       ${{ needs.build-check.result }}"
+          echo "Integration Tests: ${{ needs.integration-tests.result }}"
+          echo "CLI Tests:         ${{ needs.cli-tests.result }}"
+          echo ""
+          
+          if [ "${{ needs.build-check.result }}" != "success" ] || \
+             [ "${{ needs.integration-tests.result }}" != "success" ] || \
+             [ "${{ needs.cli-tests.result }}" != "success" ]; then
+            echo "❌ Some tests failed"
+            exit 1
+          else
+            echo "✅ All tests passed"
+          fi

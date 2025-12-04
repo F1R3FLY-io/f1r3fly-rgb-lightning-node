@@ -15,7 +15,9 @@ use lightning::{
 };
 use lightning_persister::fs_store::FilesystemStore;
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
-use rgb_lib::{bdk_wallet::keys::bip39::Mnemonic, BitcoinNetwork, ContractId};
+use bdk_wallet::keys::bip39::Mnemonic;
+use hypersonic::ContractId;
+use lightning::rgb_utils::BitcoinNetwork;
 use std::{
     collections::HashSet,
     fmt::Write,
@@ -31,7 +33,8 @@ use tokio::sync::{Mutex as TokioMutex, MutexGuard as TokioMutexGuard};
 use tokio_util::sync::CancellationToken;
 
 use crate::ldk::{ChannelIdsMap, Router};
-use crate::rgb::{get_rgb_channel_info_optional, RgbLibWalletWrapper};
+use crate::f1r3fly_rgb_adapter::F1r3flyRgbWalletWrapper;
+use crate::rgb::get_rgb_channel_info_optional;
 use crate::routes::{DEFAULT_FINAL_CLTV_EXPIRY_DELTA, HTLC_MIN_MSAT};
 use crate::{
     args::UserArgs,
@@ -105,7 +108,7 @@ pub(crate) struct UnlockedAppState {
     pub(crate) bump_tx_event_handler: Arc<BumpTxEventHandler>,
     pub(crate) maker_swaps: Arc<Mutex<SwapMap>>,
     pub(crate) taker_swaps: Arc<Mutex<SwapMap>>,
-    pub(crate) rgb_wallet_wrapper: Arc<RgbLibWalletWrapper>,
+    pub(crate) rgb_wallet_wrapper: Arc<F1r3flyRgbWalletWrapper>,
     pub(crate) router: Arc<Router>,
     pub(crate) output_sweeper: Arc<OutputSweeper>,
     pub(crate) rgb_send_lock: Arc<Mutex<bool>>,

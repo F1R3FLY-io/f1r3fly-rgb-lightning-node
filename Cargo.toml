@@ -8,7 +8,7 @@ rust-version = "1.85.0"
 name = "rgb-lightning-node"
 
 [dependencies]
-amplify = { version = "=4.8.1", default-features = false }
+amplify = { version = "4.9.0", default-features = false }
 anyhow = "1.0.93"
 axum = { version = "0.7.7", features = ["multipart"] }
 axum-extra = "0.9.4"
@@ -23,21 +23,25 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = "4.5.20"
 dirs = "5.0.1"
 futures = "0.3"
-hex = { package = "hex-conservative", version = "0.3.0", default-features = false }
+hex = "0.4"  # Standard hex for encode/decode
+hex-conservative = { version = "0.3.0", default-features = false }  # Used by bitcoin crate
+reqwest = { version = "0.11", features = ["blocking", "json", "multipart"] }
 lightning = { version = "0.0.125", features = ["max_level_trace"], path = "./rust-lightning/lightning" }
 lightning-background-processor = { version = "0.0.125", features = ["futures"], path = "./rust-lightning/lightning-background-processor" }
 lightning-block-sync = { version = "0.0.125", features = ["rpc-client", "tokio"] }
 lightning-invoice = { version = "0.32.0", features = ["std"], path = "./rust-lightning/lightning-invoice" }
-lightning-net-tokio = { version = "0.0.125" }
+lightning-net-tokio = { version = "0.0.125", path = "./rust-lightning/lightning-net-tokio" }
 lightning-persister = { version = "0.0.125", path = "./rust-lightning/lightning-persister" }
 lightning-rapid-gossip-sync = { version = "0.0.125", path = "./rust-lightning/lightning-rapid-gossip-sync" }
 magic-crypt = "4.0.1"
 rand = "0.8.5"
 regex = { version = "1.11", default-features = false }
-rgb-lib = { version = "0.3.0-beta.4", features = [
-    "electrum",
-    "esplora",
-] }
+f1r3fly-rgb = { git = "https://github.com/F1R3FLY-io/f1r3fly-rgb", branch = "main" }
+f1r3fly-rgb-wallet = { git = "https://github.com/F1R3FLY-io/f1r3fly-rgb-wallet", branch = "main" }
+hypersonic = "0.12.0"
+secp256k1 = "0.28.0"  # Match f1r3fly-rgb version for proper key derivation
+bdk_wallet = "2.2.0"
+dotenvy = "0.15"
 scrypt = "0.11.0"
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -50,6 +54,7 @@ tower-http = { version = "0.6.1", features = ["cors", "limit", "trace"] }
 tracing = "0.1"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-log = "0.2"
 typenum = "1.17.0"
 uuid = { version = "1.11.0", default-features = false, features = ["v4"] }
 walkdir = "2.5.0"
