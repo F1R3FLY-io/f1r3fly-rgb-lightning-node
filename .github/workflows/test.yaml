@@ -128,14 +128,14 @@ jobs:
       
       - name: Run issue_nia test
         env:
-          F1R3FLY_PRIVATE_KEY: ${{ secrets.F1R3FLY_PRIVATE_KEY }}
+          FIREFLY_PRIVATE_KEY: ${{ secrets.F1R3FLY_PRIVATE_KEY }}
         run: |
           set -o pipefail
           cargo test issue_nia -- --test-threads=1 --nocapture 2>&1 | tee test-issue-nia-output.log || (cat test-issue-nia-output.log && exit 1)
       
       - name: Run payment test
         env:
-          F1R3FLY_PRIVATE_KEY: ${{ secrets.F1R3FLY_PRIVATE_KEY }}
+          FIREFLY_PRIVATE_KEY: ${{ secrets.F1R3FLY_PRIVATE_KEY }}
         run: |
           set -o pipefail
           cargo test payment::success -- --test-threads=1 --nocapture 2>&1 | tee test-payment-output.log || (cat test-payment-output.log && exit 1)
@@ -255,7 +255,7 @@ jobs:
       
       - name: Run CLI test script
         env:
-          F1R3FLY_PRIVATE_KEY: ${{ secrets.F1R3FLY_PRIVATE_KEY }}
+          FIREFLY_PRIVATE_KEY: ${{ secrets.F1R3FLY_PRIVATE_KEY }}
         run: |
           set -o pipefail
           chmod +x ./ci/scripts/test-lightning-cli.sh
