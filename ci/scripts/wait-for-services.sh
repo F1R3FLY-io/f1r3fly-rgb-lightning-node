@@ -137,6 +137,30 @@ echo -e "${BLUE}Step 4: RGB Proxy${NC}"
 wait_for_port 3000 "RGB Proxy"
 
 echo ""
+echo -e "${BLUE}Step 5: F1r3node (gRPC API)${NC}"
+wait_for_port 40401 "F1r3node gRPC"
+
+# Verify F1r3node HTTP API responds
+echo -e "${YELLOW}⏳ Verifying F1r3node HTTP API...${NC}"
+start_time=$(date +%s)
+while true; do
+    current_time=$(date +%s)
+    elapsed=$((current_time - start_time))
+    
+    if [ $elapsed -gt 60 ]; then
+        echo -e "${YELLOW}⚠️  F1r3node HTTP API slow, proceeding anyway${NC}"
+        break
+    fi
+    
+    if curl -s http://localhost:40403/api/status > /dev/null 2>&1; then
+        echo -e "${GREEN}✅ F1r3node HTTP API ready (${elapsed}s)${NC}"
+        break
+    fi
+    
+    sleep 2
+done
+
+echo ""
 echo -e "${GREEN}===========================================${NC}"
 echo -e "${GREEN}✅ All Services Ready for Testing${NC}"
 echo -e "${GREEN}===========================================${NC}"
@@ -146,5 +170,7 @@ echo -e "  Bitcoin RPC:     http://localhost:18443"
 echo -e "  Electrs TCP:     localhost:50001"
 echo -e "  Electrs HTTP:    http://localhost:3002"
 echo -e "  RGB Proxy:       http://localhost:3000"
+echo -e "  F1r3node gRPC:   localhost:40401"
+echo -e "  F1r3node HTTP:   http://localhost:40403"
 echo ""
 

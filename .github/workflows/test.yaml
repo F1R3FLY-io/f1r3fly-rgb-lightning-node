@@ -158,6 +158,9 @@ jobs:
       - name: Run issue_nia test
         env:
           FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+          FIREFLY_HOST: localhost
+          FIREFLY_GRPC_PORT: 40401
+          FIREFLY_HTTP_PORT: 40403
         run: |
           # Clean up any leftover Docker data before running test
           docker compose down -v 2>/dev/null || true
@@ -168,6 +171,9 @@ jobs:
       - name: Run payment test
         env:
           FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+          FIREFLY_HOST: localhost
+          FIREFLY_GRPC_PORT: 40401
+          FIREFLY_HTTP_PORT: 40403
         run: |
           # Clean up any leftover Docker data before running test
           docker compose down -v 2>/dev/null || true
@@ -278,10 +284,10 @@ jobs:
       - name: Run CLI test script
         env:
           FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+          FIREFLY_HOST: localhost
+          FIREFLY_GRPC_PORT: 40401
+          FIREFLY_HTTP_PORT: 40403
         run: |
-          # Clean up any leftover Docker data before running test
-          docker compose down -v 2>/dev/null || true
-          sudo rm -rf datacore dataindex tmp dataldk* || true
           set -o pipefail
           chmod +x ./ci/scripts/test-lightning-cli.sh
           ./ci/scripts/test-lightning-cli.sh --clean 2>&1 | tee cli-test-output.log || (cat cli-test-output.log && exit 1)

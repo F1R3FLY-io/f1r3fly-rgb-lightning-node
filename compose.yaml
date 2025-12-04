@@ -30,6 +30,7 @@ services:
     ports:
       - 50001:50001
   electrs-http:
+    image: electrs-http
     build:
       context: .
       dockerfile: Dockerfile.electrs
@@ -58,5 +59,44 @@ services:
     ports:
       - 3000:3000
 
+  # ============================================================================
+  # F1r3node - Standalone Validator for RGB Contract Deployment
+  # ============================================================================
+  f1r3node:
+    image: f1r3flyindustries/f1r3fly-scala-node:latest
+    pull_policy: always
+    user: root
+    container_name: f1r3node
+    ports:
+      - "40400:40400"  # Protocol server
+      - "40401:40401"  # External gRPC API
+      - "40402:40402"  # Internal gRPC API
+      - "40403:40403"  # HTTP API
+      - "40404:40404"  # Kademlia discovery
+      - "40405:40405"  # Admin HTTP API
+    volumes:
+      - ./ci/conf/standalone.conf:/var/lib/rnode/rnode.conf
+      - ./ci/genesis/bonds.txt:/var/lib/rnode/genesis/bonds.txt
+      - ./ci/genesis/wallets.txt:/var/lib/rnode/genesis/wallets.txt
+      - ./ci/conf/logback.xml:/var/lib/rnode/logback.xml
+      - f1r3node-data:/var/lib/rnode/
+    environment:
+      - STANDALONE_HOST=f1r3node
+      - STANDALONE_PRIVATE_KEY=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+      - OPENAI_ENABLED=false
+    command:
+      - -Dlogback.configurationFile=/var/lib/rnode/logback.xml
+      - run
+      - -s
+      - --host=f1r3node
+      - --validator-private-key=5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:40403/api/status"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+
 volumes:
   electrs-http-data:
+  f1r3node-data:
