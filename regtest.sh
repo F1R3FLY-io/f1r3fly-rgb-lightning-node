@@ -63,12 +63,26 @@ _wait_for_electrs() {
     done
 }
 
+_wait_for_f1r3node() {
+    # wait for f1r3node to be ready
+    start_time=$(date +%s)
+    until curl -sf http://localhost:40403/api/status >/dev/null; do
+        current_time=$(date +%s)
+        if [ $((current_time - start_time)) -gt $TIMEOUT ]; then
+            echo "Timeout waiting for f1r3node to start"
+            $COMPOSE logs f1r3node
+            exit 1
+        fi
+        sleep 1
+    done
+}
+
 _start_services() {
     _stop_services
 
     mkdir -p data{core,index,ldk0,ldk1,ldk2}
     # see compose.yaml for the exposed ports
-    EXPOSED_PORTS=(3000 50001)
+    EXPOSED_PORTS=(3000 50001 40401 40403)
     for port in "${EXPOSED_PORTS[@]}"; do
         if _is_port_bound "$port"; then
             _die "port $port is already bound, services can't be started"
@@ -81,6 +95,8 @@ _start_services() {
     $BITCOIN_CLI -rpcwallet=miner -generate $INITIAL_BLOCKS >/dev/null
     echo "waiting for electrs to have completed startup"
     _wait_for_electrs
+    echo "waiting for f1r3node to be ready"
+    _wait_for_f1r3node
 }
 
 _stop_services() {
