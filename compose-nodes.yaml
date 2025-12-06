@@ -1,0 +1,50 @@
+# Lightning Nodes - Use with: docker compose -f compose.yaml -f compose-nodes.yaml up -d
+services:
+  alice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: alice-ln
+    ports:
+      - "3001:3001"  # Daemon API
+      - "9735:9735"  # LDK peer
+    volumes:
+      - ./dataldk0:/data
+    command:
+      - /data
+      - --daemon-listening-port=3001
+      - --ldk-peer-listening-port=9735
+      - --network=regtest
+      - --disable-authentication
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+      electrs:
+        condition: service_started
+      proxy:
+        condition: service_started
+
+  bob:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bob-ln
+    ports:
+      - "3003:3003"  # Daemon API
+      - "9736:9736"  # LDK peer
+    volumes:
+      - ./dataldk1:/data
+    command:
+      - /data
+      - --daemon-listening-port=3003
+      - --ldk-peer-listening-port=9736
+      - --network=regtest
+      - --disable-authentication
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+      electrs:
+        condition: service_started
+      proxy:
+        condition: service_started
+
