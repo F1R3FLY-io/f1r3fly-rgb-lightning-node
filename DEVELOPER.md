@@ -1,5 +1,31 @@
 # F1r3fly RGB Lightning Node - Developer Guide
 
+## Clone
+
+```bash
+git clone --recurse-submodules --shallow-submodules <repo-url>
+```
+
+If already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+## Build
+
+```bash
+cargo build --bin rgb-lightning-node
+```
+
+Build time: ~3 minutes
+
+### Verify Binary
+
+```bash
+./target/debug/rgb-lightning-node --help
+```
+
 ## Quick Start
 
 ### Option 1: Docker Compose (Recommended)
@@ -75,6 +101,19 @@ Stop infrastructure:
 | f1r3node  | 40403 | F1r3fly node HTTP API        |
 | alice     | 3001  | Lightning node 1 (Alice) API |
 | bob       | 3003  | Lightning node 2 (Bob) API   |
+
+### Verify Services
+
+```bash
+# Test bitcoind
+docker compose exec bitcoind bitcoin-cli -regtest -rpcuser=user -rpcpassword=password getblockchaininfo
+
+# Test electrs
+nc -zv localhost 50001
+
+# Test RGB proxy
+nc -zv localhost 3000
+```
 
 ## Node Initialization
 

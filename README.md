@@ -1,5 +1,7 @@
 # RLN - RGB Lightning Node
 
+> **F1r3fly Fork:** See [DEVELOPER.md](DEVELOPER.md) for development setup and [SETUP.md](SETUP.md) for a complete RGB Lightning workflow.
+
 RGB-enabled LN node daemon ported from [rgb-lightning-sample], which is based
 on [ldk-sample].
 
