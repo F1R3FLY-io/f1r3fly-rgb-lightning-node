@@ -29,6 +29,7 @@ pub struct F1r3flyRgbWalletWrapper {
     wallet_manager: Arc<Mutex<WalletManager>>,
 
     /// Wallet name (for file paths and lookups)
+    #[allow(dead_code)]
     wallet_name: String,
 
     /// Data directory path
@@ -327,10 +328,10 @@ impl F1r3flyRgbWalletWrapper {
 
     pub fn issue_asset_uda(
         &self,
-        ticker: String,
-        name: String,
+        _ticker: String,
+        _name: String,
         _details: Option<String>,
-        precision: u8,
+        _precision: u8,
         _media_file_path: Option<String>,
         _attachments_file_paths: Vec<String>,
     ) -> Result<AssetUDA, RgbLibError> {
@@ -723,7 +724,7 @@ impl F1r3flyRgbWalletWrapper {
 
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
-                let mgr = manager.lock().unwrap();
+                let _mgr = manager.lock().unwrap();
 
                 // TODO: Implement using generate_invoice_with_pubkey
                 Err(RgbLibError::Other("blind_receive: Not fully implemented".to_string()))
@@ -839,8 +840,9 @@ impl F1r3flyRgbWalletWrapper {
                 psbt.outputs.push(Default::default());
 
                 eprintln!("  Built PSBT with {} outputs (including OP_RETURN)", psbt.unsigned_tx.output.len());
-                
+
                 // Step 5: Sign PSBT
+                #[allow(deprecated)]
                 let sign_options = bdk_wallet::SignOptions {
                     trust_witness_utxo: true,
                     ..Default::default()
@@ -1463,12 +1465,6 @@ impl F1r3flyRgbWalletWrapper {
         let manager = self.wallet_manager.clone();
 
         tokio::task::block_in_place(|| {
-            let mgr = manager.lock().unwrap();
-
-            let bitcoin_wallet = mgr
-                .bitcoin_wallet()
-                .ok_or(RgbLibError::Other("Bitcoin wallet not loaded".to_string()))?;
-
             // Parse PSBT from string
             use bitcoin::psbt::Psbt;
             use std::str::FromStr;
@@ -1485,7 +1481,6 @@ impl F1r3flyRgbWalletWrapper {
             let sign_options = bdk_wallet::SignOptions::default();
 
             // Need mutable access to wallet
-            drop(mgr); // Release lock
             let mut mgr_mut = manager.lock().unwrap();
             let bitcoin_wallet_mut = mgr_mut
                 .bitcoin_wallet_mut()
@@ -1604,6 +1599,7 @@ impl F1r3flyRgbWalletWrapper {
         })
     }
 
+    #[allow(dead_code)]
     pub fn list_unspents_vanilla(
         &self,
         _online: Online,
@@ -1666,9 +1662,9 @@ impl F1r3flyRgbWalletWrapper {
         
         // 1. Parse asset_id (contract_id) from consignment_path
         // Path format: "{data_dir}/consignments/{asset_id}_{txid}.consignment"
-        let path_str = consignment_path.as_ref().to_str()
+        let _path_str = consignment_path.as_ref().to_str()
             .ok_or(RgbLibError::Other("Invalid consignment path".to_string()))?;
-        
+
         let filename = consignment_path.as_ref()
             .file_name()
             .and_then(|f| f.to_str())
@@ -1685,8 +1681,8 @@ impl F1r3flyRgbWalletWrapper {
         let manager = self.wallet_manager.clone();
         let (state_hash, asset_info, contract_metadata, wallet_pubkey) = tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
-                let mut mgr = manager.lock().unwrap();
-                
+                let mgr = manager.lock().unwrap();
+
                 // Get genesis state hash
                 let state_hash = mgr.get_genesis_state_hash(&asset_id)
                     .map_err(|e| RgbLibError::Other(format!("Failed to get state hash: {}", e)))?;
@@ -2403,6 +2399,7 @@ impl F1r3flyRgbWalletWrapper {
     ///
     /// # Production Enhancement
     /// TODO: Add retry logic and timeout for proxy fetches in production
+    #[allow(dead_code)]
     pub fn get_counterparty_wallet_pubkey(
         &self,
         contract_id: &str,
@@ -2470,12 +2467,14 @@ impl F1r3flyRgbWalletWrapper {
         
         // Parse JSON-RPC response
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct JsonRpcResponse {
             result: Option<JsonRpcResult>,
             error: Option<serde_json::Value>,
         }
-        
+
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct JsonRpcResult {
             consignment: String,
         }
@@ -2500,6 +2499,7 @@ impl F1r3flyRgbWalletWrapper {
         
         // Parse pubkey payload
         #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
         struct PubkeyPayload {
             wallet_pubkey: String,
         }
@@ -2759,6 +2759,7 @@ impl F1r3flyRgbWalletWrapper {
             .join(format!("{}_{}.consignment", asset_id, txid))
     }
     
+    #[allow(dead_code)]
     fn read_rgb_channel_info_from_txid(&self, ldk_data_dir: &Path, _txid: &str) -> Result<lightning::rgb_utils::RgbInfo, RgbLibError> {
         // Find the RGB channel info file
         // The file is stored as: {ldk_data_dir}/{temporary_channel_id}_pending
@@ -2834,6 +2835,7 @@ impl F1r3flyRgbWalletWrapper {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn bitcoin_network(&self) -> BitcoinNetwork {
         self.bitcoin_network
     }
