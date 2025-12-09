@@ -33,4 +33,3 @@ async fn issue_nia() {
     let nia_asset = assets_nia.first().unwrap();
     assert_eq!(nia_asset.asset_id, asset_nia.asset_id);
 }
-

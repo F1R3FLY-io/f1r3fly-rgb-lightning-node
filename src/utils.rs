@@ -1,9 +1,12 @@
 use amplify::s;
+use bdk_wallet::keys::bip39::Mnemonic;
 use bitcoin::io;
 use bitcoin::secp256k1::PublicKey;
 use futures::Future;
+use hypersonic::ContractId;
 use lightning::ln::channel_state::ChannelDetails;
 use lightning::ln::types::ChannelId;
+use lightning::rgb_utils::BitcoinNetwork;
 use lightning::routing::router::{
     Payee, PaymentParameters, Route, RouteHint, RouteParameters, Router as _,
     DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA, MAX_PATH_LENGTH_ESTIMATE,
@@ -15,9 +18,6 @@ use lightning::{
 };
 use lightning_persister::fs_store::FilesystemStore;
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
-use bdk_wallet::keys::bip39::Mnemonic;
-use hypersonic::ContractId;
-use lightning::rgb_utils::BitcoinNetwork;
 use std::{
     collections::HashSet,
     fmt::Write,
@@ -32,8 +32,8 @@ use std::{
 use tokio::sync::{Mutex as TokioMutex, MutexGuard as TokioMutexGuard};
 use tokio_util::sync::CancellationToken;
 
-use crate::ldk::{ChannelIdsMap, Router};
 use crate::f1r3fly_rgb_adapter::F1r3flyRgbWalletWrapper;
+use crate::ldk::{ChannelIdsMap, Router};
 use crate::rgb::get_rgb_channel_info_optional;
 use crate::routes::{DEFAULT_FINAL_CLTV_EXPIRY_DELTA, HTLC_MIN_MSAT};
 use crate::{

@@ -29,6 +29,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
+use tracing_log::LogTracer;
 use tracing_subscriber::{
     filter,
     fmt::{
@@ -36,10 +37,8 @@ use tracing_subscriber::{
         FormatFields,
     },
     prelude::*,
-    Layer,
-    EnvFilter,
+    EnvFilter, Layer,
 };
-use tracing_log::LogTracer;
 
 use crate::args::UserArgs;
 use crate::auth::conditional_auth_middleware;
@@ -62,7 +61,7 @@ use crate::utils::{start_daemon, AppState, LOGS_DIR};
 async fn main() -> Result<()> {
     // Load .env file if it exists (for FIREFLY_PRIVATE_KEY and other env vars)
     dotenvy::dotenv().ok();
-    
+
     let args = args::parse_startup_args()?;
 
     // stdout logger
@@ -82,13 +81,11 @@ async fn main() -> Result<()> {
 
     // Initialize log-to-tracing bridge to capture log crate messages from f1r3fly libraries
     LogTracer::init().ok();
-    
+
     // Create filter: INFO for most things, DEBUG for f1r3fly modules
     let stdout_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| {
-            EnvFilter::new("info,f1r3fly_rgb_wallet=debug,f1r3fly_rgb=debug")
-        });
-    
+        .unwrap_or_else(|_| EnvFilter::new("info,f1r3fly_rgb_wallet=debug,f1r3fly_rgb=debug"));
+
     tracing_subscriber::registry()
         .with(stdout_log.with_filter(stdout_filter))
         .with(file_log.with_filter(filter::LevelFilter::DEBUG))

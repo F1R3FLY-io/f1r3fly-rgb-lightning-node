@@ -486,33 +486,23 @@ async fn handle_rgb_channel_close(
     unlocked_state: &Arc<UnlockedAppState>,
     static_state: &Arc<StaticState>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use lightning::rgb_utils::{read_rgb_channel_info, get_rgb_channel_info_path};
     use bitcoin::hashes::sha256;
-    
-    eprintln!("🔔 handle_rgb_channel_close: Starting for channel {}", hex::encode(channel_id.0));
-    eprintln!("   Funding UTXO: {}:{}", funding_txo.txid, funding_txo.index);
-    
+    use lightning::rgb_utils::{get_rgb_channel_info_path, read_rgb_channel_info};
+
     // Read RGB channel info to check if this is an RGB channel
     let rgb_info = match read_rgb_channel_info(channel_id, &static_state.ldk_data_dir) {
-        Some(info) => {
-            eprintln!("✅ handle_rgb_channel_close: Found RGB info");
-            eprintln!("   Contract ID: {}", info.contract_id);
-            eprintln!("   Local RGB amount: {}", info.local_rgb_amount);
-            eprintln!("   Remote RGB amount: {}", info.remote_rgb_amount);
-            info
-        },
+        Some(info) => info,
         None => {
-            eprintln!("ℹ️  handle_rgb_channel_close: No RGB info found - non-RGB channel, skipping");
+            // Non-RGB channel, skip
             return Ok(());
         }
     };
-    
+
     // Skip if no RGB assets to claim
     if rgb_info.local_rgb_amount == 0 {
-        eprintln!("ℹ️  handle_rgb_channel_close: Local RGB amount is 0, skipping claim");
         return Ok(());
     }
-    
+
     // Determine if this node is the holder (channel opener) or counterparty (channel acceptor)
     // CRITICAL: settle_channel() creates TWO witness IDs:
     //   - holder_witness (for the channel opener)
@@ -523,90 +513,67 @@ async fn handle_rgb_channel_close(
     // If yes, we funded the channel (holder). If no, they funded it (counterparty).
     let funding_utxo = format!("{}:{}", funding_txo.txid, funding_txo.index);
     let funding_witness_id = format!("witness:{}", funding_utxo);
-    
-    eprintln!("📍 handle_rgb_channel_close: Funding witness ID: {}", funding_witness_id);
-    eprintln!("📍 handle_rgb_channel_close: Determining channel role (holder vs counterparty)...");
-    
+
     // Check if we have the funding TX in our wallet (i.e., we created it)
     // If yes, we are the channel opener (holder). If no, we are the channel acceptor (counterparty).
-    let we_are_holder = unlocked_state.rgb_wallet_wrapper.has_transaction(funding_txo.txid);
-    
-    eprintln!("📍 handle_rgb_channel_close: Role determined - we are {}", 
-        if we_are_holder { "HOLDER (channel opener)" } else { "COUNTERPARTY (channel acceptor)" });
-    
+    let we_are_holder = unlocked_state
+        .rgb_wallet_wrapper
+        .has_transaction(funding_txo.txid);
+
     // Generate the appropriate witness ID based on our role
     let our_witness_id = if we_are_holder {
         // We opened the channel - claim from holder_witness
         let holder_hash = <sha256::Hash as bitcoin::hashes::Hash>::hash(
-            format!("{}holder", funding_witness_id).as_bytes()
+            format!("{}holder", funding_witness_id).as_bytes(),
         );
         let holder_hash_hex = format!("{}", holder_hash);
         format!("witness:{}:0", &holder_hash_hex[0..32])
     } else {
         // They opened the channel - claim from counterparty_witness
         let counterparty_hash = <sha256::Hash as bitcoin::hashes::Hash>::hash(
-            format!("{}counterparty", funding_witness_id).as_bytes()
+            format!("{}counterparty", funding_witness_id).as_bytes(),
         );
         let counterparty_hash_hex = format!("{}", counterparty_hash);
         format!("witness:{}:0", &counterparty_hash_hex[0..32])
     };
-    
-    eprintln!("📍 handle_rgb_channel_close: Our witness ID: {}", our_witness_id);
-    
+
     // Phase 4: Get claim UTXO and execute claim
     // Uses pre-created UTXOs from pool (created at unlock) or creates on-demand
-    eprintln!("🎁 handle_rgb_channel_close: Getting claim UTXO...");
-    let claim_utxo = unlocked_state.rgb_wallet_wrapper.get_claim_utxo()
+    let claim_utxo = unlocked_state
+        .rgb_wallet_wrapper
+        .get_claim_utxo()
         .map_err(|e| format!("Failed to get claim UTXO: {}", e))?;
-    
-    eprintln!("🎁 handle_rgb_channel_close: Executing claim...");
-    eprintln!("   From witness: {}", our_witness_id);
-    eprintln!("   To UTXO: {}", claim_utxo);
-    eprintln!("   Amount (expected): {}", rgb_info.local_rgb_amount);
-    
+
     // Note: claim() determines amount from witness_id's balance on F1r3node
-    unlocked_state.rgb_wallet_wrapper.claim(
-        our_witness_id.clone(),
-        claim_utxo.clone(),
-        &rgb_info.contract_id.to_string(),
-    )
-    .map_err(|e| format!("Claim failed: {}", e))?;
-    
-    eprintln!("✅ handle_rgb_channel_close: Claim successful!");
-    eprintln!("   RGB assets ({}) now in UTXO: {}", rgb_info.local_rgb_amount, claim_utxo);
-    
+    unlocked_state
+        .rgb_wallet_wrapper
+        .claim(
+            our_witness_id.clone(),
+            claim_utxo.clone(),
+            &rgb_info.contract_id.to_string(),
+        )
+        .map_err(|e| format!("Claim failed: {}", e))?;
+
     // Release locked UTXO tracking
-    eprintln!("🔓 handle_rgb_channel_close: Releasing locked UTXO tracking");
-    if let Err(e) = unlocked_state.rgb_wallet_wrapper.release_locked_utxo(
-        &funding_txo.txid.to_string(),
-        funding_txo.index as u32,
-    ) {
-        eprintln!("⚠️  Failed to release locked UTXO: {}", e);
-        // Continue anyway - this is not critical
-    }
-    
+    let _ = unlocked_state
+        .rgb_wallet_wrapper
+        .release_locked_utxo(&funding_txo.txid.to_string(), funding_txo.index as u32);
+
     // Clean up RGB info files (both non-pending and pending)
     let channel_id_hex = hex::encode(channel_id.0);
-    let info_file_path = get_rgb_channel_info_path(&channel_id_hex, &static_state.ldk_data_dir, false);
-    let pending_info_file_path = get_rgb_channel_info_path(&channel_id_hex, &static_state.ldk_data_dir, true);
-    
+    let info_file_path =
+        get_rgb_channel_info_path(&channel_id_hex, &static_state.ldk_data_dir, false);
+    let pending_info_file_path =
+        get_rgb_channel_info_path(&channel_id_hex, &static_state.ldk_data_dir, true);
+
     if info_file_path.exists() {
-        if let Err(e) = std::fs::remove_file(&info_file_path) {
-            eprintln!("⚠️  Failed to remove RGB info file: {}", e);
-        } else {
-            eprintln!("🗑️  handle_rgb_channel_close: Cleaned up RGB info file");
-        }
+        let _ = std::fs::remove_file(&info_file_path);
     }
-    
+
     if pending_info_file_path.exists() {
-        if let Err(e) = std::fs::remove_file(&pending_info_file_path) {
-            eprintln!("⚠️  Failed to remove pending RGB info file: {}", e);
-        } else {
-            eprintln!("🗑️  handle_rgb_channel_close: Cleaned up pending RGB info file");
-        }
+        let _ = std::fs::remove_file(&pending_info_file_path);
     }
-    
-    eprintln!("✅ handle_rgb_channel_close: Completed");
+
     Ok(())
 }
 
@@ -646,46 +613,36 @@ async fn handle_ldk_events(
     use std::sync::atomic::{AtomicU64, Ordering};
     static EVENT_COUNTER: AtomicU64 = AtomicU64::new(0);
     let event_num = EVENT_COUNTER.fetch_add(1, Ordering::SeqCst);
-    
+
     // Log all events for debugging
     match &event {
         Event::FundingGenerationReady { .. } => {
-            eprintln!("📥 Event #{}: FundingGenerationReady", event_num);
-            tracing::debug!("📥 Event: FundingGenerationReady");
-        },
-        Event::ChannelPending { .. } => {
-            eprintln!("📥 Event #{}: ChannelPending ✅✅✅", event_num);
-            tracing::info!("📥 Event: ChannelPending");
-        },
-        Event::ChannelReady { .. } => {
-            eprintln!("📥 Event #{}: ChannelReady", event_num);
-            tracing::info!("📥 Event: ChannelReady");
-        },
-        Event::ChannelClosed { .. } => {
-            eprintln!("📥 Event #{}: ChannelClosed", event_num);
-            tracing::info!("📥 Event: ChannelClosed");
-        },
-        Event::PaymentClaimable { .. } => tracing::debug!("📥 Event: PaymentClaimable"),
-        Event::PaymentClaimed { .. } => tracing::debug!("📥 Event: PaymentClaimed"),
-        Event::PaymentSent { .. } => tracing::debug!("📥 Event: PaymentSent"),
-        Event::PaymentFailed { .. } => tracing::debug!("📥 Event: PaymentFailed"),
-        Event::PaymentPathSuccessful { .. } => tracing::debug!("📥 Event: PaymentPathSuccessful"),
-        Event::PaymentPathFailed { .. } => tracing::debug!("📥 Event: PaymentPathFailed"),
-        Event::HTLCHandlingFailed { .. } => tracing::debug!("📥 Event: HTLCHandlingFailed"),
-        Event::PendingHTLCsForwardable { .. } => tracing::debug!("📥 Event: PendingHTLCsForwardable"),
-        Event::SpendableOutputs { .. } => tracing::debug!("📥 Event: SpendableOutputs"),
-        Event::OpenChannelRequest { .. } => {
-            eprintln!("📥 Event #{}: OpenChannelRequest", event_num);
-            tracing::debug!("📥 Event: OpenChannelRequest");
-        },
-        Event::BumpTransaction { .. } => tracing::debug!("📥 Event: BumpTransaction"),
+            tracing::debug!(event_num, "Event: FundingGenerationReady")
+        }
+        Event::ChannelPending { .. } => tracing::info!(event_num, "Event: ChannelPending"),
+        Event::ChannelReady { .. } => tracing::info!(event_num, "Event: ChannelReady"),
+        Event::ChannelClosed { .. } => tracing::info!(event_num, "Event: ChannelClosed"),
+        Event::PaymentClaimable { .. } => tracing::debug!(event_num, "Event: PaymentClaimable"),
+        Event::PaymentClaimed { .. } => tracing::debug!(event_num, "Event: PaymentClaimed"),
+        Event::PaymentSent { .. } => tracing::debug!(event_num, "Event: PaymentSent"),
+        Event::PaymentFailed { .. } => tracing::debug!(event_num, "Event: PaymentFailed"),
+        Event::PaymentPathSuccessful { .. } => {
+            tracing::debug!(event_num, "Event: PaymentPathSuccessful")
+        }
+        Event::PaymentPathFailed { .. } => tracing::debug!(event_num, "Event: PaymentPathFailed"),
+        Event::HTLCHandlingFailed { .. } => tracing::debug!(event_num, "Event: HTLCHandlingFailed"),
+        Event::PendingHTLCsForwardable { .. } => {
+            tracing::debug!(event_num, "Event: PendingHTLCsForwardable")
+        }
+        Event::SpendableOutputs { .. } => tracing::debug!(event_num, "Event: SpendableOutputs"),
+        Event::OpenChannelRequest { .. } => tracing::debug!(event_num, "Event: OpenChannelRequest"),
+        Event::BumpTransaction { .. } => tracing::debug!(event_num, "Event: BumpTransaction"),
         Event::FundingTxBroadcastSafe { .. } => {
-            eprintln!("📡 FundingTxBroadcastSafe EVENT (manual broadcast mode)");
-            tracing::debug!("📥 Event: FundingTxBroadcastSafe");
-        },
-        _ => tracing::debug!("📥 Event: Other"),
+            tracing::debug!(event_num, "Event: FundingTxBroadcastSafe")
+        }
+        _ => tracing::debug!(event_num, "Event: Other"),
     }
-    
+
     match event {
         Event::FundingGenerationReady {
             temporary_channel_id,
@@ -712,7 +669,7 @@ async fn handle_ldk_events(
                 &temporary_channel_id,
                 &PathBuf::from(&static_state.ldk_data_dir),
             );
-            
+
             // Store RGB info for coloring later
             let rgb_channel_info = if is_colored {
                 Some(get_rgb_channel_info_pending(
@@ -722,7 +679,7 @@ async fn handle_ldk_events(
             } else {
                 None
             };
-            
+
             let (unsigned_psbt, asset_id) = if let Some((rgb_info, _)) = &rgb_channel_info {
                 let channel_rgb_amount: u64 = rgb_info.local_rgb_amount;
                 let asset_id = rgb_info.contract_id.to_string();
@@ -768,7 +725,7 @@ async fn handle_ldk_events(
             // NO post-signing coloring needed!
             // For F1r3fly: send_begin() already added the OP_RETURN with the actual state hash BEFORE signing
             // This matches how rgb-lib works - the PSBT is complete before signing
-            
+
             let funding_tx = psbt.clone().extract_tx().unwrap();
             let funding_txid = funding_tx.compute_txid().to_string();
             tracing::info!("Funding TXID: {funding_txid}");
@@ -794,11 +751,13 @@ async fn handle_ldk_events(
 
                 // Store RGB channel info temporarily for post_consignment to access
                 if let Some((rgb_info, _)) = &rgb_channel_info {
-                    let temp_info_path = static_state.ldk_data_dir.join(format!("temp_rgb_info_{}", funding_txid));
+                    let temp_info_path = static_state
+                        .ldk_data_dir
+                        .join(format!("temp_rgb_info_{}", funding_txid));
                     let info_json = serde_json::to_string(rgb_info).unwrap();
                     fs::write(temp_info_path, info_json).unwrap();
                 }
-                
+
                 let consignment_path =
                     unlocked_state.rgb_get_send_consignment_path(&asset_id, &funding_txid);
                 let proxy_url = TransportEndpoint::new(unlocked_state.proxy_endpoint.clone())
@@ -824,27 +783,8 @@ async fn handle_ldk_events(
             }
 
             let channel_manager_copy = unlocked_state.channel_manager.clone();
-            let peer_manager_copy = unlocked_state.peer_manager.clone();
 
             // Give the funding transaction back to LDK for opening the channel.
-            tracing::info!("Calling funding_transaction_generated for channel {temporary_channel_id:?}");
-            tracing::info!("Funding TX outputs: {} (expecting 3 with OP_RETURN)", funding_tx.output.len());
-            for (i, out) in funding_tx.output.iter().enumerate() {
-                if out.script_pubkey.is_op_return() {
-                    tracing::info!("  Output {}: OP_RETURN with {} bytes", i, out.script_pubkey.len());
-                } else {
-                    tracing::info!("  Output {}: {} sats", i, out.value.to_sat());
-                }
-            }
-            
-            // Check peer connectivity BEFORE funding_transaction_generated
-            let peer_before = peer_manager_copy.peer_by_node_id(&counterparty_node_id);
-            eprintln!("🔍 BEFORE funding_transaction_generated:");
-            eprintln!("  Peer {} connected: {}", counterparty_node_id, peer_before.is_some());
-            if let Some(peer) = peer_before {
-                eprintln!("  Peer socket_address: {:?}", peer.socket_address);
-            }
-            
             if channel_manager_copy
                 .funding_transaction_generated(
                     temporary_channel_id,
@@ -857,35 +797,7 @@ async fn handle_ldk_events(
                         "ERROR: Channel went away before we could fund it. The peer disconnected or refused the channel.");
                 *unlocked_state.rgb_send_lock.lock().unwrap() = false;
             } else {
-                tracing::info!("✅ Funding transaction registered with LDK");
-                
-                // Check peer connectivity AFTER funding_transaction_generated
-                let peer_after = peer_manager_copy.peer_by_node_id(&counterparty_node_id);
-                eprintln!("🔍 AFTER funding_transaction_generated:");
-                eprintln!("  Peer {} connected: {}", counterparty_node_id, peer_after.is_some());
-                if let Some(peer) = peer_after {
-                    eprintln!("  Peer socket_address: {:?}", peer.socket_address);
-                } else {
-                    eprintln!("  ❌ PEER IS NOT CONNECTED! Messages cannot be delivered!");
-                }
-                
-                // Check all connected peers
-                let all_peers = peer_manager_copy.list_peers();
-                eprintln!("🔍 All connected peers: {}", all_peers.len());
-                for (i, peer_details) in all_peers.iter().enumerate() {
-                    eprintln!("  Peer {}: {} @ {:?}", i, peer_details.counterparty_node_id, peer_details.socket_address);
-                }
-                
-                // Check channel state immediately after
-                let channels = channel_manager_copy.list_channels();
-                let matching_channels: Vec<_> = channels.iter().filter(|c| {
-                    c.counterparty.node_id == counterparty_node_id
-                }).collect();
-                tracing::info!("Channels with counterparty after funding_transaction_generated: {}", matching_channels.len());
-                for ch in matching_channels {
-                    tracing::info!("  Channel {}: ready={}, is_usable={}, is_channel_ready={}", 
-                        hex_str(&ch.channel_id.0), ch.is_channel_ready, ch.is_usable, ch.is_channel_ready);
-                }
+                tracing::info!("Funding transaction registered with LDK");
             }
         }
         Event::FundingTxBroadcastSafe { .. } => {
@@ -1312,7 +1224,9 @@ async fn handle_ldk_events(
                     funding_txo,
                     &unlocked_state,
                     &static_state,
-                ).await {
+                )
+                .await
+                {
                     tracing::error!("Failed to handle RGB channel close: {}", e);
                 }
             }
@@ -1480,8 +1394,7 @@ async fn handle_ldk_events(
             });
         }
     }
-    
-    eprintln!("✅ Event #{} processing COMPLETE", event_num);
+
     Ok(())
 }
 
@@ -1495,14 +1408,11 @@ impl OutputSpender for RgbOutputSpender {
         locktime: Option<LockTime>,
         secp_ctx: &Secp256k1<C>,
     ) -> Result<bitcoin::Transaction, ()> {
-        eprintln!("🔧 spend_spendable_outputs: ENTRY with {} descriptors", descriptors.len());
-        
         let mut hasher = DefaultHasher::new();
         descriptors.hash(&mut hasher);
         let descriptors_hash = hasher.finish();
         let mut txes = self.txes.lock().unwrap();
         if let Some(tx) = txes.get(&descriptors_hash) {
-            eprintln!("  Using cached TX");
             return Ok(tx.clone());
         }
 
@@ -1526,18 +1436,15 @@ impl OutputSpender for RgbOutputSpender {
                 .static_state
                 .ldk_data_dir
                 .join(format!("{txid_str}_transfer_info"));
-            eprintln!("  Descriptor for TXID {}: transfer_info exists = {}", txid_str, transfer_info_path.exists());
             if !transfer_info_path.exists() {
                 continue;
             };
             let transfer_info = read_rgb_transfer_info(&transfer_info_path);
-            eprintln!("    transfer_info.rgb_amount = {}", transfer_info.rgb_amount);
             if transfer_info.rgb_amount == 0 {
                 continue;
             }
 
             vanilla_descriptor = false;
-            eprintln!("    ⚠️  Found RGB transfer info, setting vanilla_descriptor = false");
 
             let closing_height = self
                 .rgb_wallet_wrapper
@@ -1594,10 +1501,7 @@ impl OutputSpender for RgbOutputSpender {
             }
         }
 
-        eprintln!("  vanilla_descriptor = {}", vanilla_descriptor);
-        
         if vanilla_descriptor {
-            eprintln!("  ✅ Using standard LDK spend (no RGB coloring)");
             return self.keys_manager.spend_spendable_outputs(
                 descriptors.as_ref(),
                 txouts,
@@ -1607,8 +1511,6 @@ impl OutputSpender for RgbOutputSpender {
                 secp_ctx,
             );
         }
-        
-        eprintln!("  ⚠️  RGB descriptor detected, will color PSBT");
 
         let feerate_sat_per_1000_weight = FEE_RATE as u32 * 250; // 1 sat/vB = 250 sat/kw
         let (psbt, _expected_max_weight) =
@@ -1970,10 +1872,10 @@ pub(crate) async fn start_ldk(
     })
     .await
     .map_err(|e| APIError::Unexpected(format!("Failed to create F1r3fly wallet: {}", e)))?;
-    
+
     // F1r3flyRgbWalletWrapper manages its own online state internally
     rgb_wallet.go_online(false, indexer_url.to_string())?;
-    
+
     fs::write(
         static_state.storage_dir_path.join(WALLET_FINGERPRINT_FNAME),
         master_fingerprint_clone.clone(),
@@ -2002,17 +1904,24 @@ pub(crate) async fn start_ldk(
     .expect("able to write");
 
     let rgb_wallet_wrapper = Arc::new(rgb_wallet);
-    
+
     // Set the global settlement executor for channel closing
-    lightning::rgb_utils::set_settlement_executor(Arc::clone(&rgb_wallet_wrapper) as Arc<dyn lightning::rgb_utils::SettlementExecutor>);
-    
+    lightning::rgb_utils::set_settlement_executor(
+        Arc::clone(&rgb_wallet_wrapper) as Arc<dyn lightning::rgb_utils::SettlementExecutor>
+    );
+
     // Set the global contract reloader for accepting RGB channels
-    lightning::rgb_utils::set_contract_reloader(Arc::clone(&rgb_wallet_wrapper) as Arc<dyn lightning::rgb_utils::ContractReloader>);
+    lightning::rgb_utils::set_contract_reloader(
+        Arc::clone(&rgb_wallet_wrapper) as Arc<dyn lightning::rgb_utils::ContractReloader>
+    );
 
     // Ensure claim UTXOs are available for future channel closes (Phase 4)
     // Pre-creates 2 small UTXOs if none exist, so channels can close without waiting for UTXO creation
     if let Err(e) = rgb_wallet_wrapper.ensure_claim_utxos_available() {
-        tracing::warn!("Failed to pre-create claim UTXOs: {}. Claims will be created on-demand.", e);
+        tracing::warn!(
+            "Failed to pre-create claim UTXOs: {}. Claims will be created on-demand.",
+            e
+        );
         // Don't fail unlock - just means claims will be slightly slower
     } else {
         tracing::info!("Claim UTXOs ready for channel closes");
@@ -2314,7 +2223,7 @@ pub(crate) async fn start_ldk(
     };
 
     // Background Processing
-    eprintln!("🚀 Starting background processor...");
+    tracing::info!("Starting background processor...");
     let (bp_exit, bp_exit_check) = tokio::sync::watch::channel(());
     let background_processor = tokio::spawn(process_events_async(
         persister,
@@ -2344,27 +2253,19 @@ pub(crate) async fn start_ldk(
             )
         },
     ));
-    eprintln!("✅ Background processor spawned");
+    tracing::info!("Background processor spawned");
 
     // Regularly reconnect to channel peers.
     let connect_cm = Arc::clone(&channel_manager);
     let connect_pm = Arc::clone(&peer_manager);
     let peer_data_path = ldk_data_dir.join(CHANNEL_PEER_DATA);
     let stop_connect = Arc::clone(&stop_processing);
-    eprintln!("🔄 Starting peer reconnection loop...");
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut tick_count = 0u64;
         loop {
             interval.tick().await;
-            tick_count += 1;
-            
-            // Log every 10 ticks to show the loop is running
-            if tick_count % 10 == 0 {
-                eprintln!("🔄 Peer reconnection loop tick #{}", tick_count);
-            }
-            
+
             match disk::read_channel_peer_data(&peer_data_path) {
                 Ok(info) => {
                     let disconnected_peers: Vec<_> = connect_cm
@@ -2373,21 +2274,21 @@ pub(crate) async fn start_ldk(
                         .map(|chan| chan.counterparty.node_id)
                         .filter(|id| connect_pm.peer_by_node_id(id).is_none())
                         .collect();
-                    
-                    if !disconnected_peers.is_empty() {
-                        eprintln!("⚠️  Tick #{}: Found {} disconnected channel peer(s), attempting reconnect...", tick_count, disconnected_peers.len());
-                    }
-                    
+
                     for node_id in disconnected_peers {
                         if stop_connect.load(Ordering::Acquire) {
                             return;
                         }
                         for (pubkey, peer_addr) in info.iter() {
                             if *pubkey == node_id {
-                                eprintln!("🔗 Reconnecting to peer {} at {}", pubkey, peer_addr);
-                                match do_connect_peer(*pubkey, *peer_addr, Arc::clone(&connect_pm)).await {
-                                    Ok(_) => eprintln!("✅ Reconnected to peer {}", pubkey),
-                                    Err(e) => eprintln!("❌ Failed to reconnect to peer {}: {:?}", pubkey, e),
+                                tracing::debug!(peer = %pubkey, address = %peer_addr, "Reconnecting to peer");
+                                match do_connect_peer(*pubkey, *peer_addr, Arc::clone(&connect_pm))
+                                    .await
+                                {
+                                    Ok(_) => tracing::debug!(peer = %pubkey, "Reconnected to peer"),
+                                    Err(e) => {
+                                        tracing::warn!(peer = %pubkey, error = ?e, "Failed to reconnect to peer")
+                                    }
                                 }
                             }
                         }
