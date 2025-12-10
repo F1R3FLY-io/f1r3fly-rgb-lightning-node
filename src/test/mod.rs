@@ -3,10 +3,10 @@ use biscuit_auth::{builder::date, macros::*, KeyPair};
 use chrono::{DateTime, Local, Utc};
 use electrum_client::ElectrumApi;
 use lazy_static::lazy_static;
+use lightning::rgb_utils::BitcoinNetwork;
 use lightning_invoice::Bolt11Invoice;
 use once_cell::sync::Lazy;
 use reqwest::Response;
-use lightning::rgb_utils::BitcoinNetwork;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -1746,20 +1746,20 @@ fn wait_electrs_sync() {
     loop {
         std::thread::sleep(std::time::Duration::from_millis(100));
         let mut all_synced = true;
-        
+
         // Check original electrs (Electrum protocol on port 50001)
         let electrum =
             electrum_client::Client::new(ELECTRUM_URL).expect("cannot get electrum client");
         if electrum.block_header(blockcount as usize).is_err() {
             all_synced = false;
         }
-        
+
         // Check electrs-http (HTTP API on port 3002)
         let output = Command::new("curl")
             .arg("-s")
             .arg("http://localhost:3002/blocks/tip/height")
             .output();
-        
+
         if let Ok(output) = output {
             if let Ok(height_str) = String::from_utf8(output.stdout) {
                 if let Ok(height) = height_str.trim().parse::<u32>() {
@@ -1775,7 +1775,7 @@ fn wait_electrs_sync() {
         } else {
             all_synced = false;
         }
-        
+
         if all_synced {
             break;
         };
@@ -1792,7 +1792,7 @@ pub(crate) fn initialize() {
             eprintln!("Warning: Failed to load .env file: {}", e);
             eprintln!("Make sure FIREFLY_PRIVATE_KEY is set in environment or .env file");
         }
-        
+
         if std::env::var("SKIP_INIT").is_ok() {
             println!("skipping services initialization");
             return;
