@@ -2937,7 +2937,7 @@ dependencies = [
  "lightning-types",
  "musig2",
  "reqwest 0.11.27",
- "rgbl1 0.1.0 (git+ssh://git@gitlab.com/smart-assets.io/satchel/rgbl1.git?branch=master)",
+ "rgbl1",
  "serde",
  "serde_json",
  "tokio",
@@ -4244,7 +4244,7 @@ dependencies = [
  "reqwest 0.11.27",
  "reqwest 0.12.26",
  "rgbL1_satchel",
- "rgbl1 0.1.0 (git+ssh://git@gitlab.com/smart-assets.io/satchel/rgbl1.git?branch=master)",
+ "rgbl1",
  "scrypt",
  "secp256k1 0.28.2",
  "serde",
@@ -4296,7 +4296,7 @@ dependencies = [
 [[package]]
 name = "rgbL1_satchel"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.com/smart-assets.io/satchel/rgb-satchel.git?branch=master#40d7dc43668bcffd8218803e4b1e6c3ab6c50099"
+source = "git+ssh://git@gitlab.com/smart-assets.io/satchel/rgb-satchel.git?branch=master#3e1d9156c74b2f1a6d48ae5b99b2ed47d6383d7a"
 dependencies = [
  "aes-gcm",
  "amplify",
@@ -4324,7 +4324,7 @@ dependencies = [
  "prost 0.12.6",
  "rand 0.8.5",
  "rgb-std",
- "rgbl1 0.1.0 (git+https://gitlab.com/smart-assets.io/satchel/rgbl1?branch=master)",
+ "rgbl1",
  "rusqlite",
  "secp256k1 0.28.2",
  "serde",
@@ -4334,36 +4334,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tower-http 0.5.2",
-]
-
-[[package]]
-name = "rgbl1"
-version = "0.1.0"
-source = "git+https://gitlab.com/smart-assets.io/satchel/rgbl1?branch=master#8f21f21a6655d2d956c21ace4dc47726c0ba1d09"
-dependencies = [
- "amplify",
- "bitcoin",
- "blake2",
- "bp-core",
- "bp-std",
- "chrono",
- "commit_verify",
- "f1r3fly-models",
- "hex",
- "hypersonic",
- "log",
- "node_cli",
- "prost 0.13.5",
- "reqwest 0.11.27",
- "rgb-invoice",
- "rgb-std",
- "secp256k1 0.28.2",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "strict_encoding",
- "strict_types",
- "tokio",
 ]
 
 [[package]]
