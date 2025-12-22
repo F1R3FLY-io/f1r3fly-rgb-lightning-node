@@ -93,14 +93,14 @@ Stop infrastructure:
 
 ## Services
 
-| Service   | Port  | Description                  |
-|-----------|-------|------------------------------|
-| bitcoind  | 18443 | Bitcoin Core regtest RPC     |
-| electrs   | 50001 | Electrum server              |
-| proxy     | 3000  | RGB proxy server             |
-| f1r3node  | 40403 | F1r3fly node HTTP API        |
-| alice     | 3001  | Lightning node 1 (Alice) API |
-| bob       | 3003  | Lightning node 2 (Bob) API   |
+| Service  | Port  | Description                  |
+| -------- | ----- | ---------------------------- |
+| bitcoind | 18443 | Bitcoin Core regtest RPC     |
+| electrs  | 50001 | Electrum server              |
+| proxy    | 3000  | RGB proxy server             |
+| f1r3node | 40403 | F1r3fly node HTTP API        |
+| alice    | 3001  | Lightning node 1 (Alice) API |
+| bob      | 3003  | Lightning node 2 (Bob) API   |
 
 ### Verify Services
 
@@ -169,6 +169,62 @@ See [SETUP.md](SETUP.md) for a complete step-by-step guide covering:
 - Opening Lightning channels (BTC and RGB)
 - Sending RGB payments over Lightning
 - Verifying balances
+
+## Testing
+
+The repository includes comprehensive tests that run in CI. Before running tests, ensure services are started:
+
+```bash
+./regtest.sh start
+```
+
+### CLI End-to-End Test
+
+The `test-lightning-cli.sh` script runs a complete end-to-end test flow:
+
+```bash
+# Build the binary first
+cargo build --bin rgb-lightning-node
+
+# Run the CLI test script
+./ci/scripts/test-lightning-cli.sh
+```
+
+Or with cleanup of previous test data:
+
+```bash
+./ci/scripts/test-lightning-cli.sh --clean
+```
+
+**Note:** The script uses the same services and data directories as `regtest.sh`, so they cannot run at the same time.
+
+### Cargo Integration Tests
+
+The CI runs two specific integration tests. To run them locally:
+
+```bash
+# Test RGB asset issuance (NIA)
+cargo test issue_nia -- --test-threads=1 --nocapture
+
+# Test Lightning payment flow
+cargo test payment::success -- --test-threads=1 --nocapture
+```
+
+**Note:** These tests require environment variables and running services. Copy `.env.example` to `.env` and adjust as needed:
+
+```bash
+cp .env.example .env
+```
+
+### Run All Tests
+
+To run the complete test suite:
+
+```bash
+cargo test
+```
+
+This runs all tests in `src/test/`. Tests use the regtest network and require services to be running via `regtest.sh`.
 
 ## Useful Commands
 

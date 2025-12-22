@@ -18,8 +18,8 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
-use f1r3fly_rgb_wallet::config::GlobalConfig;
-use f1r3fly_rgb_wallet::manager::WalletManager;
+use rgb_satchel::config::GlobalConfig;
+use rgb_satchel::manager::WalletManager;
 
 /// Adapter wrapper for F1r3fly RGB wallet
 ///
@@ -47,34 +47,50 @@ impl F1r3flyRgbWalletWrapper {
     pub async fn new(wallet_data: wallet::WalletData) -> Result<Self, RgbLibError> {
         // Convert BitcoinNetwork to f1r3fly NetworkType
         let network = match wallet_data.bitcoin_network {
-            BitcoinNetwork::Mainnet => f1r3fly_rgb_wallet::config::NetworkType::Mainnet,
-            BitcoinNetwork::Testnet => f1r3fly_rgb_wallet::config::NetworkType::Testnet,
-            BitcoinNetwork::Testnet4 => f1r3fly_rgb_wallet::config::NetworkType::Testnet, // Map to Testnet
-            BitcoinNetwork::Signet => f1r3fly_rgb_wallet::config::NetworkType::Signet,
-            BitcoinNetwork::Regtest => f1r3fly_rgb_wallet::config::NetworkType::Regtest,
+            BitcoinNetwork::Mainnet => rgb_satchel::config::NetworkType::Mainnet,
+            BitcoinNetwork::Testnet => rgb_satchel::config::NetworkType::Testnet,
+            BitcoinNetwork::Testnet4 => rgb_satchel::config::NetworkType::Testnet, // Map to Testnet
+            BitcoinNetwork::Signet => rgb_satchel::config::NetworkType::Signet,
+            BitcoinNetwork::Regtest => rgb_satchel::config::NetworkType::Regtest,
         };
 
         // Create global config
-        let master_key = std::env::var("FIREFLY_PRIVATE_KEY").unwrap_or_else(|_| {
-            "0000000000000000000000000000000000000000000000000000000000000000".to_string()
-        });
+        // Note: F1r3fly key is now derived from wallet mnemonic, not from env var
+        let esplora_url = std::env::var("ESPLORA_URL")
+            .unwrap_or_else(|_| "http://localhost:3002".to_string());
+        let f1r3node_host = std::env::var("FIREFLY_HOST")
+            .unwrap_or_else(|_| "localhost".to_string());
+        let f1r3node_grpc_port: u16 = std::env::var("FIREFLY_GRPC_PORT")
+            .unwrap_or_else(|_| "40401".to_string())
+            .parse()
+            .unwrap_or(40401);
+        let f1r3node_http_port: u16 = std::env::var("FIREFLY_HTTP_PORT")
+            .unwrap_or_else(|_| "40403".to_string())
+            .parse()
+            .unwrap_or(40403);
 
-        let config = GlobalConfig {
-            bitcoin: f1r3fly_rgb_wallet::config::BitcoinConfig {
-                network,
-                esplora_url: "http://localhost:3002".to_string(), // Electrs HTTP API (Esplora backend)
-            },
-            f1r3node: f1r3fly_rgb_wallet::config::F1r3nodeConfig {
-                host: "localhost".to_string(),
-                grpc_port: 40401,
-                http_port: 40403,
-                master_key,
-            },
-            wallets_dir: Some(wallet_data.data_dir.to_string_lossy().to_string()),
+        // Store faucet config separately for REV auto-funding later
+        let faucet_config = rgb_satchel::config::FaucetConfig::from_env();
+        let f1r3node_config = rgb_satchel::config::F1r3nodeConfig {
+            host: f1r3node_host,
+            grpc_port: f1r3node_grpc_port,
+            http_port: f1r3node_http_port,
         };
 
-        // Create wallet manager
-        let mut manager = WalletManager::new(config)
+        let config = GlobalConfig {
+            f1r3node: f1r3node_config.clone(),
+            esplora: rgb_satchel::config::EsploraUrls {
+                regtest: Some(esplora_url.clone()),
+                signet: Some(esplora_url.clone()),
+                testnet: Some(esplora_url.clone()),
+                mainnet: Some(esplora_url),
+            },
+            wallets_dir: Some(wallet_data.data_dir.to_string_lossy().to_string()),
+            faucet: faucet_config.clone(),
+        };
+
+        // Create wallet manager with network
+        let mut manager = WalletManager::new(config, network)
             .map_err(|e| RgbLibError::Other(format!("Failed to create WalletManager: {}", e)))?;
 
         // Wallet name derived from fingerprint or default
@@ -102,6 +118,74 @@ impl F1r3flyRgbWalletWrapper {
         // Check what contracts are loaded
         if manager.f1r3fly_contracts().is_none() {
             tracing::warn!("F1r3fly contracts manager not initialized");
+        }
+
+        // Write wallet's F1r3fly master public key to file for rust-lightning to access.
+        // This allows rust-lightning's internal functions to get the wallet pubkey
+        // without needing the FIREFLY_PRIVATE_KEY environment variable.
+        let wallet_pubkey_hex = if let Some(contracts_mgr) = manager.f1r3fly_contracts() {
+            match contracts_mgr.contracts().executor().get_master_public_key_hex() {
+                Ok(pubkey_hex) => {
+                    let ldk_data_dir = wallet_data.data_dir.join(".ldk");
+                    if let Err(e) = std::fs::create_dir_all(&ldk_data_dir) {
+                        tracing::warn!("Failed to create .ldk dir: {}", e);
+                    } else {
+                        let pubkey_file = ldk_data_dir.join("my_wallet_pubkey");
+                        if let Err(e) = std::fs::write(&pubkey_file, &pubkey_hex) {
+                            tracing::warn!("Failed to write wallet pubkey file: {}", e);
+                        } else {
+                            tracing::info!("Wrote wallet F1r3fly pubkey to {:?}", pubkey_file);
+                        }
+                    }
+                    Some(pubkey_hex)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get master public key: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        // Auto-fund wallet with REV if faucet is configured (regtest only)
+        if wallet_data.bitcoin_network == BitcoinNetwork::Regtest {
+            if let Some(pubkey) = &wallet_pubkey_hex {
+                // Build a minimal config for the faucet
+                let faucet_global_config = GlobalConfig {
+                    f1r3node: f1r3node_config,
+                    esplora: rgb_satchel::config::EsploraUrls::default(),
+                    wallets_dir: None,
+                    faucet: faucet_config.clone(),
+                };
+                // Try to fund with REV from faucet
+                match rgb_satchel::faucet::RevFaucet::new(&faucet_global_config, &faucet_config) {
+                    Ok(faucet) => {
+                        // Use tokio runtime to run async faucet call
+                        let pubkey_clone = pubkey.clone();
+                        let fund_result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                faucet.send_to_pubkey(&pubkey_clone, None).await
+                            })
+                        });
+                        match fund_result {
+                            Ok(result) => {
+                                tracing::info!(
+                                    "Auto-funded wallet with REV: {:.8} REV, deploy_id: {}",
+                                    result.amount_dust as f64 / 100_000_000.0,
+                                    &result.deploy_id[..20.min(result.deploy_id.len())]
+                                );
+                            }
+                            Err(e) => {
+                                tracing::debug!("REV auto-funding skipped: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("REV faucet not configured: {}", e);
+                    }
+                }
+            }
         }
 
         Ok(Self {
@@ -172,7 +256,7 @@ impl F1r3flyRgbWalletWrapper {
                 })?;
 
                 // Get available UTXOs for genesis selection
-                let filter = f1r3fly_rgb_wallet::types::UtxoFilter {
+                let filter = rgb_satchel::types::UtxoFilter {
                     available_only: true, // Only non-RGB UTXOs
                     rgb_only: false,
                     confirmed_only: true,        // Need confirmed UTXO
@@ -199,7 +283,7 @@ impl F1r3flyRgbWalletWrapper {
                 })?;
 
                 // Create issuance request
-                let request = f1r3fly_rgb_wallet::f1r3fly::IssueAssetRequest {
+                let request = rgb_satchel::f1r3fly::IssueAssetRequest {
                     ticker: ticker.clone(),
                     name: name.clone(),
                     supply: total_supply,
@@ -532,7 +616,7 @@ impl F1r3flyRgbWalletWrapper {
                 }
 
                 // Set fee rate
-                let fee_rate_config = f1r3fly_rgb_wallet::bitcoin::FeeRateConfig {
+                let fee_rate_config = rgb_satchel::bitcoin::FeeRateConfig {
                     sat_per_vb: fee_rate as f64,
                 };
                 tx_builder.fee_rate(fee_rate_config.to_bdk_fee_rate());
@@ -558,14 +642,14 @@ impl F1r3flyRgbWalletWrapper {
                 // Create EsploraClient from config
                 let esplora_url = format!("http://localhost:3002");
                 let network = match self.bitcoin_network {
-                    BitcoinNetwork::Mainnet => f1r3fly_rgb_wallet::config::NetworkType::Mainnet,
-                    BitcoinNetwork::Testnet => f1r3fly_rgb_wallet::config::NetworkType::Testnet,
-                    BitcoinNetwork::Testnet4 => f1r3fly_rgb_wallet::config::NetworkType::Testnet,
-                    BitcoinNetwork::Signet => f1r3fly_rgb_wallet::config::NetworkType::Signet,
-                    BitcoinNetwork::Regtest => f1r3fly_rgb_wallet::config::NetworkType::Regtest,
+                    BitcoinNetwork::Mainnet => rgb_satchel::config::NetworkType::Mainnet,
+                    BitcoinNetwork::Testnet => rgb_satchel::config::NetworkType::Testnet,
+                    BitcoinNetwork::Testnet4 => rgb_satchel::config::NetworkType::Testnet,
+                    BitcoinNetwork::Signet => rgb_satchel::config::NetworkType::Signet,
+                    BitcoinNetwork::Regtest => rgb_satchel::config::NetworkType::Regtest,
                 };
                 let esplora_client =
-                    f1r3fly_rgb_wallet::bitcoin::network::EsploraClient::new(&esplora_url, network)
+                    rgb_satchel::bitcoin::network::EsploraClient::new(&esplora_url, network)
                         .map_err(|e| {
                             RgbLibError::Other(format!("Failed to create Esplora client: {}", e))
                         })?;
@@ -700,6 +784,7 @@ impl F1r3flyRgbWalletWrapper {
 
         let manager = self.wallet_manager.clone();
         let data_dir = self.data_dir.clone();
+        let wallet_name = self.wallet_name.clone();
         let recipient_id_clone = recipient.recipient_id.clone();
         let asset_id_clone = asset_id.clone();
 
@@ -714,10 +799,10 @@ impl F1r3flyRgbWalletWrapper {
                     .network();
 
                 let bdk_network = match network {
-                    f1r3fly_rgb_wallet::config::NetworkType::Mainnet => bitcoin::Network::Bitcoin,
-                    f1r3fly_rgb_wallet::config::NetworkType::Testnet => bitcoin::Network::Testnet,
-                    f1r3fly_rgb_wallet::config::NetworkType::Regtest => bitcoin::Network::Regtest,
-                    f1r3fly_rgb_wallet::config::NetworkType::Signet => bitcoin::Network::Signet,
+                    rgb_satchel::config::NetworkType::Mainnet => bitcoin::Network::Bitcoin,
+                    rgb_satchel::config::NetworkType::Testnet => bitcoin::Network::Testnet,
+                    rgb_satchel::config::NetworkType::Regtest => bitcoin::Network::Regtest,
+                    rgb_satchel::config::NetworkType::Signet => bitcoin::Network::Signet,
                 };
 
                 let addr = bitcoin::Address::from_str(&recipient_id_clone)
@@ -805,7 +890,8 @@ impl F1r3flyRgbWalletWrapper {
 
                 // Step 7: Determine source UTXO for RGB transfer
                 let state_file_path = data_dir
-                    .join("rgb-lightning-wallet")
+                    .join(network.as_str())
+                    .join(&wallet_name)
                     .join("f1r3fly_state.json");
                 let state_json = std::fs::read_to_string(&state_file_path).map_err(|e| {
                     RgbLibError::Other(format!("Failed to read f1r3fly_state.json: {}", e))
@@ -840,7 +926,7 @@ impl F1r3flyRgbWalletWrapper {
                         "Contracts manager not initialized".to_string(),
                     ))?;
 
-                    use f1r3fly_rgb::ContractId;
+                    use rgbl1::ContractId;
                     let contract_id_typed = ContractId::from_str(&asset_id_clone)
                         .map_err(|e| RgbLibError::Other(format!("Invalid contract ID: {}", e)))?;
 
@@ -862,7 +948,7 @@ impl F1r3flyRgbWalletWrapper {
                     let public_key = PublicKey::from_secret_key(&secp, &signing_key);
                     let recipient_pubkey = hex::encode(public_key.serialize());
 
-                    use f1r3fly_rgb::{generate_nonce, generate_transfer_signature};
+                    use rgbl1::{generate_nonce, generate_transfer_signature};
                     let transfer_nonce = generate_nonce();
                     let transfer_signature = generate_transfer_signature(
                         &source_utxo,
@@ -884,7 +970,7 @@ impl F1r3flyRgbWalletWrapper {
                         )))?;
 
                     use amplify::confinement::SmallOrdMap;
-                    use f1r3fly_rgb::StrictVal;
+                    use rgbl1::StrictVal;
                     let _result = contract
                         .call_method(
                             "transfer",
@@ -1033,10 +1119,10 @@ impl F1r3flyRgbWalletWrapper {
                     .network();
 
                 let bdk_network = match network {
-                    f1r3fly_rgb_wallet::config::NetworkType::Mainnet => bitcoin::Network::Bitcoin,
-                    f1r3fly_rgb_wallet::config::NetworkType::Testnet => bitcoin::Network::Testnet,
-                    f1r3fly_rgb_wallet::config::NetworkType::Regtest => bitcoin::Network::Regtest,
-                    f1r3fly_rgb_wallet::config::NetworkType::Signet => bitcoin::Network::Signet,
+                    rgb_satchel::config::NetworkType::Mainnet => bitcoin::Network::Bitcoin,
+                    rgb_satchel::config::NetworkType::Testnet => bitcoin::Network::Testnet,
+                    rgb_satchel::config::NetworkType::Regtest => bitcoin::Network::Regtest,
+                    rgb_satchel::config::NetworkType::Signet => bitcoin::Network::Signet,
                 };
 
                 // Parse the address
@@ -1137,6 +1223,8 @@ impl F1r3flyRgbWalletWrapper {
 
         let manager = self.wallet_manager.clone();
         let data_dir = self.data_dir.clone();
+        let wallet_name = self.wallet_name.clone();
+        let bitcoin_network = self.bitcoin_network;
 
         tokio::task::block_in_place(|| {
             futures::executor::block_on(async {
@@ -1218,8 +1306,15 @@ impl F1r3flyRgbWalletWrapper {
                 // Only execute F1r3node transfer if this is the first broadcast attempt
                 if !already_broadcast {
                     // Step 4: Get genesis UTXO from f1r3fly_state.json
+                    let network_str = match bitcoin_network {
+                        BitcoinNetwork::Mainnet => "mainnet",
+                        BitcoinNetwork::Testnet | BitcoinNetwork::Testnet4 => "testnet",
+                        BitcoinNetwork::Signet => "signet",
+                        BitcoinNetwork::Regtest => "regtest",
+                    };
                     let state_file_path = data_dir
-                        .join("rgb-lightning-wallet")
+                        .join(network_str)
+                        .join(&wallet_name)
                         .join("f1r3fly_state.json");
                     let state_json = std::fs::read_to_string(&state_file_path).map_err(|e| {
                         RgbLibError::Other(format!("Failed to read f1r3fly_state.json: {}", e))
@@ -1261,7 +1356,7 @@ impl F1r3flyRgbWalletWrapper {
                         )?;
 
                         // Get contract ID as proper type
-                        use f1r3fly_rgb::ContractId;
+                        use rgbl1::ContractId;
                         let contract_id_typed = ContractId::from_str(contract_id).map_err(|e| {
                             RgbLibError::Other(format!("Invalid contract ID: {}", e))
                         })?;
@@ -1288,7 +1383,7 @@ impl F1r3flyRgbWalletWrapper {
                         let recipient_pubkey = hex::encode(public_key.serialize());
 
                         // Generate nonce and signature for transfer authorization
-                        use f1r3fly_rgb::{generate_nonce, generate_transfer_signature};
+                        use rgbl1::{generate_nonce, generate_transfer_signature};
                         let transfer_nonce = generate_nonce();
                         let transfer_signature = generate_transfer_signature(
                             &genesis_utxo,
@@ -1315,7 +1410,7 @@ impl F1r3flyRgbWalletWrapper {
 
                         // Call transfer method on contract
                         use amplify::confinement::SmallOrdMap;
-                        use f1r3fly_rgb::StrictVal;
+                        use rgbl1::StrictVal;
                         let _result = contract
                             .call_method(
                                 "transfer",
@@ -1383,7 +1478,7 @@ impl F1r3flyRgbWalletWrapper {
 
         tokio::task::block_in_place(|| {
             let mut mgr = manager.lock().unwrap();
-            let fee_config = f1r3fly_rgb_wallet::bitcoin::FeeRateConfig {
+            let fee_config = rgb_satchel::bitcoin::FeeRateConfig {
                 sat_per_vb: fee_rate as f64,
             };
 
@@ -1416,10 +1511,10 @@ impl F1r3flyRgbWalletWrapper {
 
             // Convert to BDK network type
             let bdk_network = match network {
-                f1r3fly_rgb_wallet::config::NetworkType::Mainnet => bitcoin::Network::Bitcoin,
-                f1r3fly_rgb_wallet::config::NetworkType::Testnet => bitcoin::Network::Testnet,
-                f1r3fly_rgb_wallet::config::NetworkType::Regtest => bitcoin::Network::Regtest,
-                f1r3fly_rgb_wallet::config::NetworkType::Signet => bitcoin::Network::Signet,
+                rgb_satchel::config::NetworkType::Mainnet => bitcoin::Network::Bitcoin,
+                rgb_satchel::config::NetworkType::Testnet => bitcoin::Network::Testnet,
+                rgb_satchel::config::NetworkType::Regtest => bitcoin::Network::Regtest,
+                rgb_satchel::config::NetworkType::Signet => bitcoin::Network::Signet,
             };
 
             // Parse the address
@@ -1555,7 +1650,7 @@ impl F1r3flyRgbWalletWrapper {
             futures::executor::block_on(async {
                 let mut mgr = manager.lock().unwrap();
 
-                let filter = f1r3fly_rgb_wallet::types::UtxoFilter {
+                let filter = rgb_satchel::types::UtxoFilter {
                     available_only: false,
                     rgb_only: false,
                     confirmed_only: settled_only,
@@ -1717,13 +1812,20 @@ impl F1r3flyRgbWalletWrapper {
             .ok_or(RgbLibError::Other("Cannot extract filename".to_string()))?;
 
         // Extract asset_id from filename: "{asset_id}_{txid}.consignment"
-        let asset_id = filename
-            .split('_')
-            .next()
+        // Note: asset_id (contract ID) can contain underscores, so we split from the right
+        // The txid is always the last segment before .consignment
+        let filename_without_ext = filename
+            .strip_suffix(".consignment")
+            .unwrap_or(filename);
+        
+        // Find the last underscore which separates asset_id from txid
+        let last_underscore_pos = filename_without_ext
+            .rfind('_')
             .ok_or(RgbLibError::Other(
-                "Cannot parse asset_id from path".to_string(),
-            ))?
-            .to_string();
+                "Cannot parse asset_id from path - no underscore found".to_string(),
+            ))?;
+        
+        let asset_id = filename_without_ext[..last_underscore_pos].to_string();
 
         // 2. Get genesis state hash, contract metadata, and wallet public key from wallet manager
         let manager = self.wallet_manager.clone();
@@ -2120,7 +2222,7 @@ impl F1r3flyRgbWalletWrapper {
 
             // Generate signature using f1r3fly-rgb's signature generation
             // NOTE: Signature is over the witness ID (not plain UTXO) because that's what F1r3node stores
-            use f1r3fly_rgb::generate_settle_channel_signature;
+            use rgbl1::generate_settle_channel_signature;
             let signature = generate_settle_channel_signature(
                 &funding_witness_id,
                 holder_amount,
@@ -2131,7 +2233,7 @@ impl F1r3flyRgbWalletWrapper {
             .map_err(|e| RgbLibError::Other(format!("Signature generation failed: {}", e)))?;
 
             // Call F1r3node contract's settle_channel method (while holding lock)
-            use f1r3fly_rgb::StrictVal;
+            use rgbl1::StrictVal;
 
             // Execute F1r3node call using individual contract (same pattern as send_end)
             // Get the specific contract (has its own executor clone)
@@ -2234,13 +2336,13 @@ impl F1r3flyRgbWalletWrapper {
 
             // Generate signature for claim authorization
             // Note: Rholang claim() only requires (witness_id, real_utxo) signature
-            use f1r3fly_rgb::generate_claim_signature;
+            use rgbl1::generate_claim_signature;
             let signature = generate_claim_signature(&witness_id, &claim_utxo, &signing_key)
                 .map_err(|e| RgbLibError::Other(format!("Signature generation failed: {}", e)))?;
 
             // Call F1r3node contract's claim method
             use amplify::confinement::SmallOrdMap;
-            use f1r3fly_rgb::StrictVal;
+            use rgbl1::StrictVal;
 
             // Get the specific contract
             let contract = contracts_mgr
@@ -2305,7 +2407,7 @@ impl F1r3flyRgbWalletWrapper {
                         .as_secs();
 
                     // Create PendingClaim record
-                    use f1r3fly_rgb_wallet::storage::{ClaimStatus, PendingClaim};
+                    use rgb_satchel::storage::{ClaimStatus, PendingClaim};
                     use std::path::PathBuf;
 
                     let pending_claim = PendingClaim {
@@ -2376,10 +2478,7 @@ impl F1r3flyRgbWalletWrapper {
         proxy_url: &str,
     ) -> Result<String, RgbLibError> {
         // Check cache first
-        let state_file_path = self
-            .data_dir
-            .join("rgb-lightning-wallet")
-            .join("f1r3fly_state.json");
+        let state_file_path = self.get_state_file_path();
 
         if state_file_path.exists() {
             let state_json = std::fs::read_to_string(&state_file_path)
@@ -2822,6 +2921,23 @@ impl F1r3flyRgbWalletWrapper {
     #[allow(dead_code)]
     pub fn bitcoin_network(&self) -> BitcoinNetwork {
         self.bitcoin_network
+    }
+
+    /// Get the path to the f1r3fly_state.json file
+    ///
+    /// The state file is stored at: `<data_dir>/<network>/<wallet_name>/f1r3fly_state.json`
+    /// This matches the directory structure used by rgb-satchel.
+    fn get_state_file_path(&self) -> PathBuf {
+        let network_str = match self.bitcoin_network {
+            BitcoinNetwork::Mainnet => "mainnet",
+            BitcoinNetwork::Testnet | BitcoinNetwork::Testnet4 => "testnet",
+            BitcoinNetwork::Signet => "signet",
+            BitcoinNetwork::Regtest => "regtest",
+        };
+        self.data_dir
+            .join(network_str)
+            .join(&self.wallet_name)
+            .join("f1r3fly_state.json")
     }
 }
 

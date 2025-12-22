@@ -281,6 +281,9 @@ sleep 5
 call_api "$NODE1_HTTP_PORT" "/sync" "{}" > /dev/null
 echo ""
 
+# Note: REV funding is now handled automatically by the F1r3fly adapter
+# during wallet initialization (see f1r3fly_rgb_adapter.rs)
+
 # Step 11: Issue RGB Asset
 echo "Step 11: Issue RGB asset..."
 ISSUE_RESP=$(call_api "$NODE1_HTTP_PORT" "/issueassetnia" "{

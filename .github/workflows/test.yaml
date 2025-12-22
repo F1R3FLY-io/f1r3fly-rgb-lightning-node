@@ -26,22 +26,25 @@ jobs:
         with:
           submodules: true
       
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          rustflags: ""
-          cache: true
-      
-      - name: Configure git for private repos
+      - name: Setup SSH for GitLab
         run: |
-          git config --global url."https://x-access-token:${{ secrets.F1R3FLY_RGB_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GITLAB_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
       
       - name: Configure Cargo to use git CLI
         run: |
           mkdir -p ~/.cargo
           echo '[net]' >> ~/.cargo/config.toml
           echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
+      
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+          cache: true
       
       - name: Install dependencies
         run: |
@@ -52,53 +55,10 @@ jobs:
         run: cargo build --all-targets
 
   # ==========================================================================
-  # Build Electrs - Build once and share via artifact
-  # ==========================================================================
-  build-electrs:
-    name: Build Electrs Docker Image
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Cache Docker layers
-        uses: actions/cache@v4
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-electrs-${{ hashFiles('Dockerfile.electrs') }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-electrs-
-      
-      - name: Build and export electrs-http image
-        run: |
-          docker buildx build \
-            --cache-from type=local,src=/tmp/.buildx-cache \
-            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
-            -f Dockerfile.electrs \
-            -t electrs-http \
-            --output type=docker,dest=/tmp/electrs-http.tar \
-            .
-          rm -rf /tmp/.buildx-cache
-          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
-      
-      - name: Upload electrs image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: electrs-http-image
-          path: /tmp/electrs-http.tar
-          retention-days: 1
-
-  # ==========================================================================
   # Integration Tests - issue_nia and payment tests
   # ==========================================================================
   integration-tests:
     name: Integration Tests (issue_nia, payment)
-    needs: build-electrs
     runs-on: ubuntu-latest
     timeout-minutes: 60
     
@@ -108,16 +68,12 @@ jobs:
         with:
           submodules: true
       
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          rustflags: ""
-          cache: true
-      
-      - name: Configure git for private repos
+      - name: Setup SSH for GitLab
         run: |
-          git config --global url."https://x-access-token:${{ secrets.F1R3FLY_RGB_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GITLAB_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
       
       - name: Configure Cargo to use git CLI
         run: |
@@ -125,19 +81,22 @@ jobs:
           echo '[net]' >> ~/.cargo/config.toml
           echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
       
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+          cache: true
+      
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl protobuf-compiler
       
-      - name: Download electrs image
-        uses: actions/download-artifact@v4
-        with:
-          name: electrs-http-image
-          path: /tmp
-      
-      - name: Load electrs image
-        run: docker load -i /tmp/electrs-http.tar
+      - name: Pull Electrs image from Docker Hub
+        run: |
+          docker pull spreston8/electrs-regtest:latest
+          docker tag spreston8/electrs-regtest:latest electrs-http
       
       - name: Clean up any leftover data
         run: |
@@ -157,7 +116,6 @@ jobs:
       
       - name: Run issue_nia test
         env:
-          FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
           FIREFLY_HOST: localhost
           FIREFLY_GRPC_PORT: 40401
           FIREFLY_HTTP_PORT: 40403
@@ -170,7 +128,6 @@ jobs:
       
       - name: Run payment test
         env:
-          FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
           FIREFLY_HOST: localhost
           FIREFLY_GRPC_PORT: 40401
           FIREFLY_HTTP_PORT: 40403
@@ -218,7 +175,6 @@ jobs:
   # ==========================================================================
   cli-tests:
     name: CLI Integration Tests
-    needs: build-electrs
     runs-on: ubuntu-latest
     timeout-minutes: 45
     
@@ -228,16 +184,12 @@ jobs:
         with:
           submodules: true
       
-      - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
-          rustflags: ""
-          cache: true
-      
-      - name: Configure git for private repos
+      - name: Setup SSH for GitLab
         run: |
-          git config --global url."https://x-access-token:${{ secrets.F1R3FLY_RGB_REPO_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GITLAB_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
       
       - name: Configure Cargo to use git CLI
         run: |
@@ -245,19 +197,22 @@ jobs:
           echo '[net]' >> ~/.cargo/config.toml
           echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
       
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          rustflags: ""
+          cache: true
+      
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq curl netcat-openbsd protobuf-compiler
       
-      - name: Download electrs image
-        uses: actions/download-artifact@v4
-        with:
-          name: electrs-http-image
-          path: /tmp
-      
-      - name: Load electrs image
-        run: docker load -i /tmp/electrs-http.tar
+      - name: Pull Electrs image from Docker Hub
+        run: |
+          docker pull spreston8/electrs-regtest:latest
+          docker tag spreston8/electrs-regtest:latest electrs-http
       
       - name: Build rgb-lightning-node binary
         run: |
@@ -283,7 +238,6 @@ jobs:
       
       - name: Run CLI test script
         env:
-          FIREFLY_PRIVATE_KEY: 5f668a7ee96d944a4494cc947e4005e172d7ab3461ee5538f1f2a45a835e9657
           FIREFLY_HOST: localhost
           FIREFLY_GRPC_PORT: 40401
           FIREFLY_HTTP_PORT: 40403
@@ -329,7 +283,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [build-check, build-electrs, integration-tests, cli-tests]
+    needs: [build-check, integration-tests, cli-tests]
     if: always()
     
     steps:
@@ -340,13 +294,11 @@ jobs:
           echo "==================================="
           echo ""
           echo "Build Check:       ${{ needs.build-check.result }}"
-          echo "Build Electrs:     ${{ needs.build-electrs.result }}"
           echo "Integration Tests: ${{ needs.integration-tests.result }}"
           echo "CLI Tests:         ${{ needs.cli-tests.result }}"
           echo ""
           
           if [ "${{ needs.build-check.result }}" != "success" ] || \
-             [ "${{ needs.build-electrs.result }}" != "success" ] || \
              [ "${{ needs.integration-tests.result }}" != "success" ] || \
              [ "${{ needs.cli-tests.result }}" != "success" ]; then
             echo "❌ Some tests failed"

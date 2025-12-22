@@ -12,14 +12,29 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      
+      - name: Setup SSH for GitLab
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.GITLAB_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan gitlab.com >> ~/.ssh/known_hosts
+      
+      - name: Configure Cargo to use git CLI
+        run: |
+          mkdir -p ~/.cargo
+          echo '[net]' >> ~/.cargo/config.toml
+          echo 'git-fetch-with-cli = true' >> ~/.cargo/config.toml
+      
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
           rustflags: ""
+      
       - name: Lint
         run: cargo clippy --all-targets -- -D warnings

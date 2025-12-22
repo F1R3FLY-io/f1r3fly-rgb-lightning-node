@@ -191,6 +191,9 @@ async fn start_node(
 
     unlock(node_address, &password).await;
 
+    // Note: REV funding is now handled automatically by the adapter
+    // during wallet initialization (see f1r3fly_rgb_adapter.rs)
+
     println!("node on peer port {node_peer_port} started with address {node_address:?}");
     (node_address, password)
 }
@@ -1790,7 +1793,7 @@ pub(crate) fn initialize() {
         // Load environment variables from .env file for F1r3fly configuration
         if let Err(e) = dotenvy::dotenv() {
             eprintln!("Warning: Failed to load .env file: {}", e);
-            eprintln!("Make sure FIREFLY_PRIVATE_KEY is set in environment or .env file");
+            eprintln!("Make sure FIREFLY_HOST and ESPLORA_URL are set in environment or .env file");
         }
 
         if std::env::var("SKIP_INIT").is_ok() {

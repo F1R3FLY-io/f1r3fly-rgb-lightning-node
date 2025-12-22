@@ -59,7 +59,7 @@ use crate::utils::{start_daemon, AppState, LOGS_DIR};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Load .env file if it exists (for FIREFLY_PRIVATE_KEY and other env vars)
+    // Load .env file if it exists (for FIREFLY_HOST, ESPLORA_URL, etc.)
     dotenvy::dotenv().ok();
 
     let args = args::parse_startup_args()?;
@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
 
     // Create filter: INFO for most things, DEBUG for f1r3fly modules
     let stdout_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,f1r3fly_rgb_wallet=debug,f1r3fly_rgb=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("info,rgb_satchel=debug,rgbl1=debug"));
 
     tracing_subscriber::registry()
         .with(stdout_log.with_filter(stdout_filter))
