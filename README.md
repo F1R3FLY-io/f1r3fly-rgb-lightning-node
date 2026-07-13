@@ -8,7 +8,11 @@ on [ldk-sample].
 The node enables the possibility to create payment channels containing assets
 issued using the RGB protocol, as well as routing RGB asset denominated
 payments across multiple channels, given that they all possess the necessary
-liquidity. In this way, RGB assets can be transferred with the same user
+liquidity.
+
+> **BountyForge SA Credit boundary:** Lightning/RGB invoices and payments are asset rails, not fiat checkout. BountyForge SA Credits remain PAIR-denominated entries in the authoritative BountyForge Credit Service and are only mirrored read-only into SATCHEL. This node must not issue purchased credits, hold processor secrets, redeem credits, or route/transform the SA Credit balance. DLEX/bridge integrations may charge an externally authorized credit fee while routing an independent asset.
+
+In this way, RGB assets can be transferred with the same user
 experience and security assumptions of regular Bitcoin Lightning Network
 payments. This is achieved by adding to each lightning commitment transaction a
 dedicated extra output containing the anchor to the RGB state transition.
